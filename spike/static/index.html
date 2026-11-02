@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>stack-spike · SSE 事件页</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    #status { padding: .3rem .6rem; border-radius: 4px; display: inline-block; }
+    .ok  { background: #d1fae5; color: #065f46; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    li { margin: .2rem 0; font-family: monospace; font-size: 13px; }
+    .kind-verdict { color: #b45309; }
+  </style>
+</head>
+<body>
+  <h1>skill-observability · stack-spike</h1>
+  <p>SSE 连接状态: <span id="status" class="bad">connecting…</span></p>
+  <ol id="events"></ol>
+
+  <script>
+    // React 侧等价写法( useEffect ):
+    //   useEffect(() => {
+    //     const es = new EventSource("/api/events");
+    //     es.addEventListener("trace", e => setEvents(v => [...v, JSON.parse(e.data)]);
+    //     return () => es.close();
+    //   }, []);
+    const statusEl = document.getElementById("status");
+    const listEl = document.getElementById("events");
+    const es = new EventSource("/api/events");
+
+    es.onopen = () => { statusEl.textContent = "connected (SSE)"; statusEl.className = "ok"; };
+    es.onerror = () => { statusEl.textContent = "disconnected (自动重连中)"; statusEl.className = "bad"; };
+
+    es.addEventListener("trace", (e) => {
+      const evt = JSON.parse(e.data);
+      const li = document.createElement("li");
+      li.textContent = `#${evt.id} [${evt.kind}] ${JSON.stringify(evt.payload)}`;
+      if (evt.kind === "verdict") li.className = "kind-verdict";
+      listEl.appendChild(li);
+      listEl.scrollTop = listEl.scrollHeight;
+    });
+  </script>
+</body>
+</html>

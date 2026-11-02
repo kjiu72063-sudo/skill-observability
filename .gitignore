@@ -1,0 +1,6 @@
+# spike 运行产物
+spike/.venv/
+spike/spike.db
+spike/frontend/node_modules/
+spike/frontend/dist/
+__pycache__/
