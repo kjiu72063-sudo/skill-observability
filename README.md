@@ -1,4 +1,4 @@
 # skill-observability
 
-Agent Skill �Ϲ�ɹ۲�ƽ̨
+Agent Skill 合规可观测平台
 
