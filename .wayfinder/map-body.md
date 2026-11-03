@@ -20,6 +20,7 @@
 - [OTel span 字段语义调研（仅字段，不搭管道）](https://github.com/kjiu72063-sudo/skill-observability/issues/4)：11 个 OTel 原生字段 + 自定义 `agent_id`；attributes 沿用 `gen_ai.*` 约定，自定义仅 `skill_observability.verdict/.matched_rule/.block_reason`；block 记 ERROR + `error.type="policy.block"`；payload 快照不进 span 归审计表；成果在 `research/otel-span-fields` 分支。
 - [LLM 录制回放机制调研](https://github.com/kjiu72063-sudo/skill-observability/issues/5)：推荐 VCR.py cassette（httpx2 拦截），三档开关 `live/replay/record` + `except openai.APIError` 自动降级兜底；`match_on` 必须含 body，cassette 按场景分文件并脱敏；respx 不可用；成果在 `research/llm-replay` 分支。
 - [Trace 数据模型与查询 API 契约](https://github.com/kjiu72063-sudo/skill-observability/issues/6)：只存 span 表（trace=查询聚合视图，`end_time_unix_nano` NULL=进行中，attributes 不加列）；`GET /api/traces`（agent_id/时间/page）+ 详情平铺数组前端建树；SSE 分 `span.start`/`span.end` 两事件、event_log 快照按 Last-Event-ID 回放；审计关联键 `trace_id`+`span_id` 无 FK；契约文件 `docs/contracts/trace-data-model.md`。
+- [埋点 SDK 接口与内联拦截点设计](https://github.com/kjiu72063-sudo/skill-observability/issues/8)：分层 API（上下文管理器原语 `agent_run`/`chat` + 唯一派发入口 `execute_tool`，拦截点不可绕过）；`contextvars` 传父子；block 抛 `PolicyBlocked`（matched_rule/reason/trace_id/span_id）子任务边界终止；进程内直连写库 + 同进程直推 SSE、不设上报 API；审计由 SDK 拦截点统一写、引擎纯函数 `evaluate()`。
 
 ## Not yet specified
 
