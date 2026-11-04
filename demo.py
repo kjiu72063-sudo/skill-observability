@@ -20,21 +20,32 @@ import threading
 import time
 from pathlib import Path
 
-import uvicorn
-
-from scenario.customer_service.agent import run_customer_service_turn
-from scenario.customer_service.config import CASSETTE_PATH, DEMO_USER_MESSAGE, MODEL
-from scenario.customer_service.llm import ReplayLlmClient
-
-if __package__ in (None, ""):  # 直接以脚本运行（python demo.py）
+if __package__ in (None, ""):  # 直接以脚本运行（python demo.py，任意 cwd）
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from skill_observability.app import create_app  # noqa: E402
-from skill_observability.db import Storage  # noqa: E402
-from skill_observability.engine import PolicyEngine  # noqa: E402
-from skill_observability.printing import print_run_audits, print_trace_tree  # noqa: E402
-from skill_observability.sdk import ObservabilitySdk  # noqa: E402
-from skill_observability.sse import EventHub  # noqa: E402
+try:
+    import uvicorn
+
+    from skill_observability.app import create_app
+    from skill_observability.db import Storage
+    from skill_observability.engine import PolicyEngine
+    from skill_observability.printing import print_run_audits, print_trace_tree
+    from skill_observability.sdk import ObservabilitySdk
+    from skill_observability.sse import EventHub
+    from scenario.customer_service.agent import run_customer_service_turn
+    from scenario.customer_service.config import CASSETTE_PATH, DEMO_USER_MESSAGE, MODEL
+    from scenario.customer_service.llm import ReplayLlmClient
+except ImportError as e:  # 依赖未装进当前解释器（如 anaconda base）：给出明确指引
+    venv_python = (
+        r".venv\Scripts\python.exe" if os.name == "nt" else ".venv/bin/python"
+    )
+    sys.stderr.write(
+        f"\n[fatal] 当前 Python 缺少依赖：{e}\n\n"
+        f"二选一：\n"
+        f"  1) 用仓库自带虚拟环境（已装好）：{venv_python} demo.py\n"
+        f"  2) 装进当前解释器后重跑：pip install -r requirements.txt && python demo.py\n\n"
+    )
+    sys.exit(1)
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "demo.db"
