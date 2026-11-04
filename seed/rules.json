@@ -1,0 +1,50 @@
+[
+  {
+    "id": "r1-pii-id-card",
+    "name": "客户身份证号外泄",
+    "category": "pii",
+    "action": "block",
+    "enabled": true,
+    "priority": 100,
+    "agent_ids": ["customer-service"],
+    "tool_names": null,
+    "args_regex": { "pattern": "\\d{17}[\\dXx]", "flags": "i", "fields": null },
+    "description": "命中 18 位身份证号即拦截"
+  },
+  {
+    "id": "r1b-pii-phone-audit",
+    "name": "客户手机号外泄（观察期）",
+    "category": "pii",
+    "action": "audit",
+    "enabled": true,
+    "priority": 200,
+    "agent_ids": ["customer-service"],
+    "tool_names": null,
+    "args_regex": { "pattern": "1[3-9]\\d{9}", "flags": "i", "fields": null },
+    "description": "观察期规则：命中不拦，仅记录，先观察后收紧"
+  },
+  {
+    "id": "r2-dangerous-rm",
+    "name": "危险 shell 命令拦截",
+    "category": "dangerous_command",
+    "action": "block",
+    "enabled": true,
+    "priority": 100,
+    "agent_ids": ["ops"],
+    "tool_names": ["run_shell"],
+    "args_regex": { "pattern": "rm\\s+-[a-z]*[rf]", "flags": "i", "fields": ["command"] },
+    "description": "运维 agent 执行 rm -rf 类命令时拦截"
+  },
+  {
+    "id": "r3-tool-denylist",
+    "name": "生产库工具黑名单",
+    "category": "tool_denylist",
+    "action": "block",
+    "enabled": true,
+    "priority": 100,
+    "agent_ids": ["ops"],
+    "tool_names": ["drop_production_db"],
+    "args_regex": null,
+    "description": "禁止运维 agent 触碰生产库工具"
+  }
+]

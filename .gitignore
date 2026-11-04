@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 运行期 SQLite 文件（issue #12 边界）
+demo.db
+
+# 测试/工具缓存
+.pytest_cache/

@@ -1,0 +1,10 @@
+# M1 垂直切片依赖（issue #12：逐包 == 钉死，不装最新版）
+# fastapi ≥0.135：fastapi.sse 原生 EventSourceResponse（research/stack-spike 已验证）
+fastapi==0.162.0
+uvicorn==0.54.0
+# openai SDK 默认 HTTPX2 传输；vcrpy ≥9 支持 httpx2 拦截（research/llm-replay #5 结论）
+openai==3.45.0
+vcrpy==9.4.2
+# httpx：printing 走查询 API 用；httpx2：openai 传输层（vcrpy 拦截目标），随 openai 显式钉死
+httpx==0.28.1
+httpx2==2.16.0
