@@ -183,8 +183,8 @@ CREATE TABLE event_log (
 | `error.type` | 失败/被拦时设：异常类名 / `policy.block`；成功不设 |
 | `exception.type/message/stacktrace` | 记在 `events` 里 `name="exception"` 的事件上 |
 | `service.name` | = `agent_id`（保持 OTel 可读性） |
-| `skill_observability.verdict` | `allow` / `block`（`blocked` 查询即 `json_extract` 此键） |
-| `skill_observability.matched_rule` | block 时命中规则 id |
+| `skill_observability.verdict` | `allow` / `block`（`blocked` 查询即 `json_extract` 此键）。写入时机（#7 §5）：block 必写；allow 仅观察期命中时写；未命中规则的成功调用不写 |
+| `skill_observability.matched_rule` | 命中规则 id：block 必写；allow 且命中观察期规则时也写（#7 §5） |
 | `skill_observability.block_reason` | block 理由展示副本，权威副本在审计表 |
 
 ## 4. 与审计表的关联键（边界：其余归 #7）
