@@ -79,36 +79,83 @@ class SpanHandle:
 
 
 def _truncate_json_text(text: str, cap_bytes: int) -> str:
-    """把序列化 JSON 截到 cap 字节内并保持可解析（audit §3.2「截断后的对象」）。
+    """把序列化 JSON 截到 cap **字节**内并保持可解析（audit 契约 §3.1/§3.2）。
 
-    沿字符串/结构栈回退：在 cap 处切断，补齐未闭合的引号与括号。防御性上限，
+    按字节预算逐字符扫描（UTF-8 多字节安全），只在保证合法的位置落刀：
+
+    - **值字符串内部**（``expect_value`` 为真时进入的字符串）：任意非转义点可切，
+      补闭合引号即可（``{"note": "汉⎹`` → ``{"note": "汉"}``）；
+    - **闭符 ``}``/``]`` 之后**（含闭符）或**逗号之前**（不含逗号）——值完成边界，
+      补齐未闭合括号即合法；键字符串内部与冒号后**不可**切（``{"k"}`` / ``{"a":}`` 非法）；
+    - 绝不切进 ``\\uXXXX`` 转义中间（``escaped`` / ``unicode_pending`` 守卫）；
+    - cap 内不存在任何边界（如首个键字符串本身超长、巨型标量）时兜底 ``{}``。
+
+    结果恒为合法 JSON 且字节数 ≤ cap（候选时已预留闭合符字节）。防御性上限，
     演示数据远小于此。
     """
-    encoded = text.encode("utf-8")
-    if len(encoded) <= cap_bytes:
+    if len(text.encode("utf-8")) <= cap_bytes:
         return text
-    cut = text[:cap_bytes]
     stack: list[str] = []
     in_string = False
+    string_is_value = False  # 进入当前字符串时是否处于值位置（键串不可切）
     escaped = False
-    for ch in cut:
+    unicode_pending = 0      # \uXXXX 余下的 hex 位
+    expect_value = False     # 下一个字符串是否为值（数组内恒为值）
+    best: tuple[int, int, str] | None = None  # (结果字节数, 前缀字符长, 后缀)
+    byte = 0
+
+    for i, ch in enumerate(text):
+        w = len(ch.encode("utf-8"))
+        if byte + w > cap_bytes:
+            break
+        byte += w
         if in_string:
             if escaped:
                 escaped = False
-            elif ch == "\\":
+                if ch == "u":
+                    unicode_pending = 4
+                continue
+            if unicode_pending:
+                unicode_pending -= 1
+                continue
+            if ch == "\\":
                 escaped = True
-            elif ch == '"':
+                continue
+            if ch == '"':
                 in_string = False
+                if string_is_value:  # 值串闭合点是边界
+                    closers = "".join(reversed(stack))
+                    if byte + len(closers) <= cap_bytes:
+                        best = (byte + len(closers), i + 1, closers)
+                continue
+            if string_is_value:  # 值串内任意非转义点：补引号+闭合
+                closers = "".join(reversed(stack))
+                if byte + 1 + len(closers) <= cap_bytes:
+                    best = (byte + 1 + len(closers), i + 1, '"' + closers)
             continue
+
         if ch == '"':
             in_string = True
+            string_is_value = expect_value
+        elif ch == ":":
+            expect_value = True
+        elif ch == ",":
+            closers = "".join(reversed(stack))
+            if byte - 1 + len(closers) <= cap_bytes:
+                best = (byte - 1 + len(closers), i, closers)
+            expect_value = bool(stack) and stack[-1] == "]"
         elif ch in "{[":
             stack.append("}" if ch == "{" else "]")
-        elif ch in "}]" and stack and stack[-1] == ch:
-            stack.pop()
-    if in_string or escaped:
-        cut += '"'
-    return cut + "".join(reversed(stack))
+            expect_value = ch == "["
+        elif ch in "}]":
+            if stack and stack[-1] == ch:
+                stack.pop()
+            closers = "".join(reversed(stack))
+            if byte + len(closers) <= cap_bytes:
+                best = (byte + len(closers), i + 1, closers)
+            expect_value = bool(stack) and stack[-1] == "]"
+        # 其余字符（标量/空白）：边界由随后的 , } ] 收割
+    return text[: best[1]] + best[2] if best else "{}"
 
 
 class ObservabilitySdk:
@@ -228,9 +275,19 @@ class ObservabilitySdk:
                                   final_attrs, events)
                 raise  # ⑧ fn 异常原样重抛
             else:
-                # ⑥ 成功保持 UNSET（不写 OK）；未命中规则不写 verdict 属性
+                # ⑥ 成功保持 UNSET（不写 OK）。verdict 属性写入时机（trace 契约 §3.4 /
+                # policy 契约 §5）：block 必写（见 _finish_blocked）；allow 仅**观察期命中**
+                # 时写 verdict/matched_rule 两键（无 error.type / block_reason）；
+                # 未命中规则的成功调用不写。
+                final_attrs = attributes
+                if verdict.matched_rule is not None:
+                    final_attrs = {
+                        **attributes,
+                        "skill_observability.verdict": "allow",
+                        "skill_observability.matched_rule": verdict.matched_rule,
+                    }
                 self._finish_span(span_id, start_ns, "UNSET", None,
-                                  attributes, [])
+                                  final_attrs, [])
                 return result  # ⑧
         finally:
             _current_span.reset(token)
@@ -316,9 +373,13 @@ class ObservabilitySdk:
                      trace_id: str, span_id: str, agent_id: str) -> None:
         rule = self._engine.rule_by_id(verdict.matched_rule) if verdict.matched_rule else None
         payload_json = json.dumps(args, ensure_ascii=False)
-        truncated = len(payload_json.encode("utf-8")) > _AUDIT_PAYLOAD_CAP_BYTES
-        if truncated:
-            payload_json = _truncate_json_text(payload_json, _AUDIT_PAYLOAD_CAP_BYTES)
+        stored_payload = payload_json
+        if len(payload_json.encode("utf-8")) > _AUDIT_PAYLOAD_CAP_BYTES:
+            # 截断（按字节、保持可解析）；标志与「内容是否真被切」严格一致
+            stored_payload = _truncate_json_text(payload_json, _AUDIT_PAYLOAD_CAP_BYTES)
+            truncated = True
+        else:
+            truncated = False
         self._storage.insert_audit(
             trace_id=trace_id,
             span_id=span_id,
@@ -329,7 +390,7 @@ class ObservabilitySdk:
             rule_name=rule.name if rule else None,
             action=rule.action if rule else None,
             reason=verdict.reason,
-            payload_json=payload_json,
+            payload_json=stored_payload,
             payload_truncated=truncated,
             created_at_unix_nano=self._clock(),
         )
