@@ -1,14 +1,15 @@
 """单命令入口：``python demo.py``（#12 钉死的生命周期，#10 人验1/人验5 的唯一自洽机制）。
 
-- 起服务（同进程 uvicorn 后台线程，#8 决议 4）→ 自动跑一遍客服场景第一拍
-  「查订单（allow）」→ 打印（树 + 本 run 审计，走查询 API）→ **进程不退出**。
+- 起服务（同进程 uvicorn 后台线程，#8 决议 4）→ 自动跑一遍客服场景三拍全程
+  （查订单 allow → 手机号观察期 r1b → 身份证拦截 r1 → 终止报告）→ 打印（树 +
+  终止报告 + 本 run 审计，走查询 API）→ **进程不退出**。
 - 提示「回车重跑 / Ctrl+C 退出」；回车 = 同进程内重跑：新 trace、DB 累积、SSE 续推。
   不允许「再开一个 python demo.py」——会端口冲突，且第二个进程写的 span
   不会出现在第一个进程的 SSE 流里（#8 决议 4 已把跨进程推送延期）。
 - 人验5：另开终端 ``curl -N http://127.0.0.1:8000/api/events`` → 首连收到全量
   回放 → 回车重跑 → curl 实时收到新 run 的 span.start / span.end。
 - pytest 不走交互循环：交互包装只属于本入口；场景运行暴露为可导入函数
-  （:func:`bootstrap` / :func:`run_first_beat`）与 ASGI app（app.create_app）。
+  （:class:`DemoDeps` / :func:`run_demo_turn`）与 ASGI app（app.create_app）。
 """
 
 from __future__ import annotations
@@ -83,14 +84,14 @@ class DemoDeps:
         return create_app(self.storage, self.engine, self.hub)
 
 
-def run_first_beat(deps: DemoDeps) -> str:
-    """跑第一拍「查订单（allow）」，返回 trace_id（可导入，供测试/复用）。"""
+def run_demo_turn(deps: DemoDeps) -> str:
+    """跑三拍全程（allow → 观察期 → block → 终止报告），返回 trace_id（可导入，供测试/复用）。"""
     run_start = time.time_ns()
     result = run_customer_service_turn(deps.sdk, deps.llm, DEMO_USER_MESSAGE)
     print()
     print_trace_tree(deps.base_url, result.trace_id)
     print()
-    print(f"答复：{result.answer}")
+    print(result.answer)
     print()
     print_run_audits(deps.base_url, run_start)
     return result.trace_id
@@ -115,7 +116,7 @@ def main() -> None:
     deps = DemoDeps(port=port)
     _start_server(deps)
     print("=" * 64)
-    print("skill-observability M1 demo（客服场景 · 第一拍：查订单 allow）")
+    print("skill-observability M1 demo（客服场景 · 三拍全程：allow → 观察期 → 拦截）")
     print(f"  查询 API / SSE：{deps.base_url}  （实时流：curl -N {deps.base_url}/api/events）")
     print("  生命周期：起服务 → 自动跑一遍 → 回车重跑（同进程，新 trace）/ Ctrl+C 退出")
     print("=" * 64)
@@ -126,11 +127,11 @@ def main() -> None:
             first = False
         else:
             try:
-                input("\n—— 回车重跑本拍（同进程内：新 trace、DB 累积、SSE 续推）——")
+                input("\n—— 回车重跑全程（同进程内：新 trace、DB 累积、SSE 续推）——")
             except (EOFError, KeyboardInterrupt):
                 print("\n退出。")
                 return
-        run_first_beat(deps)
+        run_demo_turn(deps)
         # 跑完不退出：提示语在下一轮循环的 input 里
 
 

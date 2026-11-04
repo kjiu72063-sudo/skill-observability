@@ -22,12 +22,21 @@ def _fmt_span_line(span: dict, depth: int) -> str:
     )
     attrs = span.get("attributes") or {}
     if span["status_code"] == "ERROR":
-        line += f" ERROR: {span.get('status_message') or ''}"
         if attrs.get("error.type") == "policy.block":
-            line += f"（规则 {attrs.get('skill_observability.matched_rule')}）"
+            # #10 人验2：block 节点带 ERROR + 命中规则/理由标记（status_message 即引擎 reason）
+            line += (
+                f" ERROR（policy.block · 规则 {attrs.get('skill_observability.matched_rule')}）"
+                f"：{span.get('status_message') or ''}"
+            )
+        else:
+            line += f" ERROR: {span.get('status_message') or ''}"
     elif attrs.get("skill_observability.verdict") == "allow":
-        # 观察期命中（audit 规则）：verdict 仍 allow，仅标记
-        line += f"（观察期命中 {attrs.get('skill_observability.matched_rule')}）"
+        # 观察期命中（audit 规则）：verdict 仍 allow、status UNSET，仅标记（#13 端到端首验
+        # f440b24 的 span 标记补写——观察期分支自此不再永假）
+        line += (
+            f"（观察期 verdict=allow"
+            f" · 规则 {attrs.get('skill_observability.matched_rule')}）"
+        )
     return line
 
 
@@ -73,6 +82,7 @@ def print_run_audits(base_url: str, run_start_unix_nano: int) -> None:
         reason = a["reason"] or "未命中任何规则"
         print(
             f"  #{a['id']} {a['tool_name']} verdict={a['verdict']} rule={rule}"
+            f" trace={a['trace_id']} span={a['span_id']}"
             f" payload={json_compact(a['payload'])}"
             f"\n      理由：{reason}"
         )

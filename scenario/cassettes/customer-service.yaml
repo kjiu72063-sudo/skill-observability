@@ -1,7 +1,7 @@
 interactions:
 - request:
-    body: '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "你是电商客服助手。回答用户问题前，先通过提供的工具查询订单系统，不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"}, {"role": "user", "content": "帮我查一下订单 20241025001 现在到哪了"}], "temperature": 0, "tools": [{"type": "function", "function": {"name": "query_user_db", "description": "查询订单数据库，返回订单的物流状态等最新信息", "parameters": {"type": "object", "properties": {"order_id": {"type": "string", "description": "订单号，如 20241025001"}}, "required": ["order_id"]}}}]}'
-    headers: &id001
+    body: '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "你是电商客服助手。回答用户问题前，先通过提供的工具查询订单系统，不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"}, {"role": "user", "content": "帮我查一下订单 20241025001 现在到哪了"}], "temperature": 0, "tools": [{"type": "function", "function": {"name": "query_user_db", "description": "查询订单数据库，返回订单的物流状态等最新信息", "parameters": {"type": "object", "properties": {"order_id": {"type": "string", "description": "订单号，如 20241025001"}}, "required": ["order_id"]}}}, {"type": "function", "function": {"name": "query_contact_by_phone", "description": "按手机号查询客户联系资料，用于回电前核对客户信息", "parameters": {"type": "object", "properties": {"phone": {"type": "string", "description": "客户手机号，如 13812345678"}}, "required": ["phone"]}}}, {"type": "function", "function": {"name": "verify_customer_id", "description": "按身份证号查询客户实名核验信息，用于回拨前身份核对", "parameters": {"type": "object", "properties": {"id_card": {"type": "string", "description": "客户 18 位身份证号"}}, "required": ["id_card"]}}}]}'
+    headers:
       Accept:
       - application/json
       Content-Type:
@@ -10,7 +10,7 @@ interactions:
     uri: https://api.openai.com/v1/chat/completions
   response:
     body:
-      string: '{"id": "chatcmpl-demo-1", "object": "chat.completion", "created": 1764000000, "model": "gpt-4o-mini", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "refusal": null, "tool_calls": [{"id": "call_demo_1", "type": "function", "function": {"name": "query_user_db", "arguments": "{\"order_id\": \"20241025001\"}"}}]}, "finish_reason": "tool_calls", "logprobs": null}], "service_tier": "default", "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}}'
+      string: '{"id": "chatcmpl-demo-1", "object": "chat.completion", "created": 1764000060, "model": "gpt-4o-mini", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "refusal": null, "tool_calls": [{"id": "call_demo_1", "type": "function", "function": {"name": "query_user_db", "arguments": "{\"order_id\": \"20241025001\"}"}}]}, "finish_reason": "tool_calls", "logprobs": null}], "service_tier": "default", "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}}'
     headers:
       Content-Type:
       - application/json
@@ -20,13 +20,37 @@ interactions:
       code: 200
       message: OK
 - request:
-    body: '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "你是电商客服助手。回答用户问题前，先通过提供的工具查询订单系统，不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"}, {"role": "user", "content": "帮我查一下订单 20241025001 现在到哪了"}, {"role": "assistant", "content": null, "tool_calls": [{"id": "call_demo_1", "type": "function", "function": {"name": "query_user_db", "arguments": "{\"order_id\": \"20241025001\"}"}}]}, {"role": "tool", "tool_call_id": "call_demo_1", "content": "{\"found\": true, \"order\": {\"order_id\": \"20241025001\", \"status\": \"已发货\", \"carrier\": \"顺丰速运\", \"tracking_no\": \"SF1234567890\", \"eta\": \"2026-11-06\", \"items\": [{\"sku\": \"KB-87-GRID\", \"name\": \"无线机械键盘\", \"qty\": 1}]}}"}], "temperature": 0, "tools": [{"type": "function", "function": {"name": "query_user_db", "description": "查询订单数据库，返回订单的物流状态等最新信息", "parameters": {"type": "object", "properties": {"order_id": {"type": "string", "description": "订单号，如 20241025001"}}, "required": ["order_id"]}}}]}'
-    headers: *id001
+    body: '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "你是电商客服助手。回答用户问题前，先通过提供的工具查询订单系统，不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"}, {"role": "user", "content": "帮我查一下订单 20241025001 现在到哪了"}, {"role": "assistant", "content": null, "tool_calls": [{"id": "call_demo_1", "type": "function", "function": {"name": "query_user_db", "arguments": "{\"order_id\": \"20241025001\"}"}}]}, {"role": "tool", "tool_call_id": "call_demo_1", "content": "{\"found\": true, \"order\": {\"order_id\": \"20241025001\", \"status\": \"已发货\", \"carrier\": \"顺丰速运\", \"tracking_no\": \"SF1234567890\", \"eta\": \"2026-11-06\", \"items\": [{\"sku\": \"KB-87-GRID\", \"name\": \"无线机械键盘\", \"qty\": 1}], \"customer_phone\": \"13812345678\", \"note\": \"收件人要求派送前回电 13812345678 确认签收\"}}"}], "temperature": 0, "tools": [{"type": "function", "function": {"name": "query_user_db", "description": "查询订单数据库，返回订单的物流状态等最新信息", "parameters": {"type": "object", "properties": {"order_id": {"type": "string", "description": "订单号，如 20241025001"}}, "required": ["order_id"]}}}, {"type": "function", "function": {"name": "query_contact_by_phone", "description": "按手机号查询客户联系资料，用于回电前核对客户信息", "parameters": {"type": "object", "properties": {"phone": {"type": "string", "description": "客户手机号，如 13812345678"}}, "required": ["phone"]}}}, {"type": "function", "function": {"name": "verify_customer_id", "description": "按身份证号查询客户实名核验信息，用于回拨前身份核对", "parameters": {"type": "object", "properties": {"id_card": {"type": "string", "description": "客户 18 位身份证号"}}, "required": ["id_card"]}}}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
     method: POST
     uri: https://api.openai.com/v1/chat/completions
   response:
     body:
-      string: '{"id": "chatcmpl-demo-2", "object": "chat.completion", "created": 1764000060, "model": "gpt-4o-mini", "choices": [{"index": 0, "message": {"role": "assistant", "content": "您的订单 20241025001 已由顺丰速运揽收，预计 2026-11-06 送达。", "refusal": null}, "finish_reason": "stop", "logprobs": null}], "service_tier": "default", "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60}}'
+      string: '{"id": "chatcmpl-demo-2", "object": "chat.completion", "created": 1764000120, "model": "gpt-4o-mini", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "refusal": null, "tool_calls": [{"id": "call_demo_2", "type": "function", "function": {"name": "query_contact_by_phone", "arguments": "{\"phone\": \"13812345678\"}"}}]}, "finish_reason": "tool_calls", "logprobs": null}], "service_tier": "default", "usage": {"prompt_tokens": 60, "completion_tokens": 8, "total_tokens": 68}}'
+    headers:
+      Content-Type:
+      - application/json
+      openai-organization:
+      - demo
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model": "gpt-4o-mini", "messages": [{"role": "system", "content": "你是电商客服助手。回答用户问题前，先通过提供的工具查询订单系统，不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"}, {"role": "user", "content": "帮我查一下订单 20241025001 现在到哪了"}, {"role": "assistant", "content": null, "tool_calls": [{"id": "call_demo_1", "type": "function", "function": {"name": "query_user_db", "arguments": "{\"order_id\": \"20241025001\"}"}}]}, {"role": "tool", "tool_call_id": "call_demo_1", "content": "{\"found\": true, \"order\": {\"order_id\": \"20241025001\", \"status\": \"已发货\", \"carrier\": \"顺丰速运\", \"tracking_no\": \"SF1234567890\", \"eta\": \"2026-11-06\", \"items\": [{\"sku\": \"KB-87-GRID\", \"name\": \"无线机械键盘\", \"qty\": 1}], \"customer_phone\": \"13812345678\", \"note\": \"收件人要求派送前回电 13812345678 确认签收\"}}"}, {"role": "assistant", "content": null, "tool_calls": [{"id": "call_demo_2", "type": "function", "function": {"name": "query_contact_by_phone", "arguments": "{\"phone\": \"13812345678\"}"}}]}, {"role": "tool", "tool_call_id": "call_demo_2", "content": "{\"found\": true, \"profile\": {\"name\": \"张伟\", \"phone\": \"13812345678\", \"id_card\": \"110101199003071234\", \"member_level\": \"黄金会员\", \"city\": \"北京市（合成数据）\"}}"}], "temperature": 0, "tools": [{"type": "function", "function": {"name": "query_user_db", "description": "查询订单数据库，返回订单的物流状态等最新信息", "parameters": {"type": "object", "properties": {"order_id": {"type": "string", "description": "订单号，如 20241025001"}}, "required": ["order_id"]}}}, {"type": "function", "function": {"name": "query_contact_by_phone", "description": "按手机号查询客户联系资料，用于回电前核对客户信息", "parameters": {"type": "object", "properties": {"phone": {"type": "string", "description": "客户手机号，如 13812345678"}}, "required": ["phone"]}}}, {"type": "function", "function": {"name": "verify_customer_id", "description": "按身份证号查询客户实名核验信息，用于回拨前身份核对", "parameters": {"type": "object", "properties": {"id_card": {"type": "string", "description": "客户 18 位身份证号"}}, "required": ["id_card"]}}}]}'
+    headers:
+      Accept:
+      - application/json
+      Content-Type:
+      - application/json
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: '{"id": "chatcmpl-demo-3", "object": "chat.completion", "created": 1764000180, "model": "gpt-4o-mini", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "refusal": null, "tool_calls": [{"id": "call_demo_3", "type": "function", "function": {"name": "verify_customer_id", "arguments": "{\"id_card\": \"110101199003071234\"}"}}]}, "finish_reason": "tool_calls", "logprobs": null}], "service_tier": "default", "usage": {"prompt_tokens": 130, "completion_tokens": 8, "total_tokens": 138}}'
     headers:
       Content-Type:
       - application/json

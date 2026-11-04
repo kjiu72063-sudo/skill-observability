@@ -3,11 +3,16 @@
 树形（#10：chat 包住整轮——工具 span 是当轮 chat span 的子 span，树三层）::
 
     invoke_agent customer-service        (根，INTERNAL)
-    └─ chat gpt-4o-mini                  (CLIENT，包住本轮 LLM 调用 + 工具执行)
-       └─ execute_tool query_user_db     (INTERNAL)
+    ├─ chat gpt-4o-mini                  (CLIENT，包住本轮 LLM 调用 + 工具执行)
+    │  └─ execute_tool query_user_db     (INTERNAL，allow 未命中)
+    ├─ chat gpt-4o-mini
+    │  └─ execute_tool query_contact_by_phone   (INTERNAL，r1b 观察期命中，verdict 仍 allow)
+    └─ chat gpt-4o-mini
+       └─ execute_tool verify_customer_id       (INTERNAL，r1 拦截 ERROR)
 
-PolicyBlocked 在子任务边界（工具调用处）捕获 → 报告 → 终止，不重试（#8 决议 3）。
-本票（#12）只演练第一拍 allow 分支；观察期/拦截两拍归子票 2（分支已就位）。
+PolicyBlocked 在子任务边界（工具调用处）捕获 → 终止报告 → 终止，不重试（#8 决议 3，
+#10 人验3）；拦截语义由工具 span 的 ERROR + error.type="policy.block" 承载，root/chat
+正常收口（#13 实现备注：root 终态 UNSET）。
 """
 
 from __future__ import annotations
@@ -60,10 +65,14 @@ def _tool_loop(sdk: ObservabilitySdk, llm: ReplayLlmClient, messages: list[dict]
                         call_id=tc.call_id,
                     )
                 except PolicyBlocked as pb:
-                    # 子任务边界：报告 → 终止（不重试、不改道）
+                    # 子任务边界：终止报告 → 终止（不重试、不改道，#8 决议 3 / #10 人验3；
+                    # 文案粗糙可，对话质量归 #9）。异常在本 with 块内被捕获，chat span 正常收口。
                     return (
-                        f"[任务终止] Skill 调用被策略拦截：{pb.block_reason}"
-                        f"（规则 {pb.matched_rule}，trace {pb.trace_id} span {pb.span_id}）"
+                        "[终止报告] 本次任务在工具调用处被合规策略拦截，已终止（不重试、不改道）。\n"
+                        f"  被拦调用：{tc.name}\n"
+                        f"  命中规则：{pb.matched_rule}\n"
+                        f"  理由：{pb.block_reason}\n"
+                        f"  trace 关联：trace {pb.trace_id} / span {pb.span_id}"
                     )
                 messages.append({
                     "role": "tool",

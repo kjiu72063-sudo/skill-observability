@@ -18,7 +18,7 @@ SYSTEM_PROMPT = (
     "不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"
 )
 
-# 工具清单（顺序稳定：cassette body 匹配对数组序敏感）
+# 工具清单（顺序稳定：cassette body 匹配对数组序敏感；#13 扩到三拍全程）
 TOOLS = [
     {
         "type": "function",
@@ -36,7 +36,41 @@ TOOLS = [
                 "required": ["order_id"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_contact_by_phone",
+            "description": "按手机号查询客户联系资料，用于回电前核对客户信息",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone": {
+                        "type": "string",
+                        "description": "客户手机号，如 13812345678",
+                    }
+                },
+                "required": ["phone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "verify_customer_id",
+            "description": "按身份证号查询客户实名核验信息，用于回拨前身份核对",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id_card": {
+                        "type": "string",
+                        "description": "客户 18 位身份证号",
+                    }
+                },
+                "required": ["id_card"],
+            },
+        },
+    },
 ]
 
 # 预置数据（合成数据，无真实 PII；查订单参数不含身份证号/手机号模式）
@@ -48,6 +82,28 @@ ORDERS = {
         "tracking_no": "SF1234567890",
         "eta": "2026-11-06",
         "items": [{"sku": "KB-87-GRID", "name": "无线机械键盘", "qty": 1}],
+        "customer_phone": "13812345678",
+        "note": "收件人要求派送前回电 13812345678 确认签收",
+    }
+}
+
+# 客户资料（按手机号索引；含身份证号——三拍「身份证查询」的数据来路）
+USER_PROFILES = {
+    "13812345678": {
+        "name": "张伟",
+        "phone": "13812345678",
+        "id_card": "110101199003071234",
+        "member_level": "黄金会员",
+        "city": "北京市（合成数据）",
+    }
+}
+
+# 实名核验库（按身份证号索引；demo 里被 r1 拦截，fn 不会执行——数据仅备查）
+REALNAME_RECORDS = {
+    "110101199003071234": {
+        "name": "张伟",
+        "id_card": "110101199003071234",
+        "realname_verified": True,
     }
 }
 
