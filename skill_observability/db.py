@@ -281,7 +281,8 @@ class Storage:
                 " s.end_time_unix_nano, s.status_code,"
                 " (SELECT COUNT(*) FROM span c WHERE c.trace_id = s.trace_id) AS span_count,"
                 " EXISTS(SELECT 1 FROM span b WHERE b.trace_id = s.trace_id"
-                "        AND json_extract(b.attributes, '$.skill_observability.verdict') = 'block')"
+                "        AND json_extract(b.attributes, '$.\"skill_observability.verdict\"')"
+                "            = 'block')"
                 "   AS blocked"
                 f" FROM span s WHERE {where_sql}"
                 " ORDER BY s.start_time_unix_nano DESC LIMIT ? OFFSET ?",
