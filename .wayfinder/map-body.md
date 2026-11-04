@@ -23,6 +23,7 @@
 - [埋点 SDK 接口与内联拦截点设计](https://github.com/kjiu72063-sudo/skill-observability/issues/8)：分层 API（上下文管理器原语 agent_run/chat + 唯一派发入口 execute_tool，拦截点不可绕过）；contextvars 传父子；block 抛 PolicyBlocked（matched_rule/reason/trace_id/span_id）子任务边界终止；进程内直连写库+同进程直推 SSE、不设上报 API；审计由 SDK 拦截点统一写、引擎纯函数 evaluate()。
 - [策略引擎规则模型与管理 API](https://github.com/kjiu72063-sudo/skill-observability/issues/7)：匹配条件=工具名集合+参数正则两原语 AND（category 仅展示不参与求值）；动作 block/audit，audit=观察期（命中不拦、verdict 仍 allow、matched_rule 有值）；作用域仅 agent 维度（无会话）；热生效=rule 表唯一真相+内存快照+rules_version，API 200 后下一次 evaluate 生效；审计表字段、GET /api/audits、规则 CRUD（id 客户端 slug、PUT 全量替换、无 PATCH、不加 rule.changed SSE）均入契约；R4/R5 修正为引擎能力边界（不支持≠不演示），种子 R1/R2/R3+观察期活例；契约 docs/contracts/policy-and-audit.md（0b480cd）+ ADR-0001。
 - [M1 垂直切片验收物定死](https://github.com/kjiu72063-sudo/skill-observability/issues/10)：可见产出 = A 真实命令输出（`python demo.py` 单命令、LLM replay 档、打印走查询 API 不直读 DB，不碰 React，与 #2 并行）；垂直范围 = allow / 观察期 / block 三条端到端路径全通到「可查询」（进：chat 原语、引擎全语义、查询 API×3、SSE 推送；不进：规则 CRUD+热生效→M2 规则管理区块）；验收 = 人验 5 项 + pytest 冒烟机验 4 项（详见 #10 决议）；M2 原则「一区块一片端到端」（树→审计→规则管理→统计）、M3 原则「以四拍倒排每片收口一拍」；实现票 [M1 垂直切片实现](https://github.com/kjiu72063-sudo/skill-observability/issues/11)。
+- [M1 子票1：曳光弹——allow 路径端到端 + demo 生命周期定型](https://github.com/kjiu72063-sudo/skill-observability/issues/12)：`python demo.py` 单命令全链落地（SDK 三原语按 #8 八步/被拦七步、引擎全语义+种子 4 条、查询 API×3 + SSE 回放/实时/续传、replay 档手写 cassette、生命周期=自动首跑→回车同进程重跑→Ctrl+C）；code-review 两轴两缺陷（观察期 span 标记漏写、审计 payload 截断）TDD 红→绿修掉；人验+新会话复查双过（1717480 / cbf328c / f440b24）。
 
 ## Not yet specified
 
@@ -30,6 +31,7 @@
 - 统计卡片的具体口径与数量（四拍只承诺「若干统计卡」）。
 - 测试策略与 CI 形态（演示项目，最小集待定）。
 - README 架构章节的叙事结构。
+- 契约 policy §1.3「匹配片段为命中的叶子文本」措辞歧义（实现按 §3.2 示例取 m.group(0)）——下次动契约时补一句「匹配片段=首个命中叶子的 m.group(0)」，防 M2 实现者再读歧义。
 
 ## Out of scope
 
