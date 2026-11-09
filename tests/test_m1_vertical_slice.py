@@ -59,10 +59,10 @@ def deps(tmp_path) -> _Deps:
 
 @pytest.fixture()
 def run(deps) -> dict:
-    """跑一遍三拍全程（allow → 观察期 → block → 终止报告），返回结构化结果。"""
+    """跑一遍三拍全程（allow → 观察期 → block → 终止报告），返回结果字段。"""
     run_start = time.time_ns()
     result = run_customer_service_turn(deps.sdk, deps.llm, DEMO_USER_MESSAGE)
-    return {"trace_id": result.trace_id, "answer": result.answer, "run_start": run_start}
+    return {"trace_id": result.trace_id, "run_start": run_start}
 
 
 @pytest.fixture()
@@ -71,7 +71,7 @@ def client(deps):
 
 
 @pytest.fixture()
-def spans_by_id(deps, client, run) -> dict:
+def spans_by_id(client, run) -> dict:
     """本 trace 全部 span，按 span_id 索引（经查询 API 拉回，端到端真实）。"""
     resp = client.get(f"/api/traces/{run['trace_id']}")
     assert resp.status_code == 200
