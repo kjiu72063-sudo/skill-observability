@@ -10,7 +10,7 @@
     └─ chat gpt-4o-mini
        └─ execute_tool verify_customer_id       (INTERNAL，r1 拦截 ERROR)
 
-PolicyBlocked 在子任务边界（工具调用处）捕获 → 终止报告 → 终止，不重试（#8 决议 3，
+PolicyBlocked 在子任务边界（Skill 调用处）捕获 → 终止报告 → 终止，不重试（#8 决议 3，
 #10 人验3）；拦截语义由工具 span 的 ERROR + error.type="policy.block" 承载，root/chat
 正常收口（#13 实现备注：root 终态 UNSET）。
 """
@@ -68,7 +68,7 @@ def _tool_loop(sdk: ObservabilitySdk, llm: ReplayLlmClient, messages: list[dict]
                     # 子任务边界：终止报告 → 终止（不重试、不改道，#8 决议 3 / #10 人验3；
                     # 文案粗糙可，对话质量归 #9）。异常在本 with 块内被捕获，chat span 正常收口。
                     return (
-                        "[终止报告] 本次任务在工具调用处被合规策略拦截，已终止（不重试、不改道）。\n"
+                        "[终止报告] 本次任务在 Skill 调用处被合规策略拦截，已终止（不重试、不改道）。\n"
                         f"  被拦调用：{tc.name}\n"
                         f"  命中规则：{pb.matched_rule}\n"
                         f"  理由：{pb.block_reason}\n"
