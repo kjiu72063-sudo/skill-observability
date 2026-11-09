@@ -24,6 +24,7 @@
 - [策略引擎规则模型与管理 API](https://github.com/kjiu72063-sudo/skill-observability/issues/7)：匹配条件=工具名集合+参数正则两原语 AND（category 仅展示不参与求值）；动作 block/audit，audit=观察期（命中不拦、verdict 仍 allow、matched_rule 有值）；作用域仅 agent 维度（无会话）；热生效=rule 表唯一真相+内存快照+rules_version，API 200 后下一次 evaluate 生效；审计表字段、GET /api/audits、规则 CRUD（id 客户端 slug、PUT 全量替换、无 PATCH、不加 rule.changed SSE）均入契约；R4/R5 修正为引擎能力边界（不支持≠不演示），种子 R1/R2/R3+观察期活例；契约 docs/contracts/policy-and-audit.md（0b480cd）+ ADR-0001。
 - [M1 垂直切片验收物定死](https://github.com/kjiu72063-sudo/skill-observability/issues/10)：可见产出 = A 真实命令输出（`python demo.py` 单命令、LLM replay 档、打印走查询 API 不直读 DB，不碰 React，与 #2 并行）；垂直范围 = allow / 观察期 / block 三条端到端路径全通到「可查询」（进：chat 原语、引擎全语义、查询 API×3、SSE 推送；不进：规则 CRUD+热生效→M2 规则管理区块）；验收 = 人验 5 项 + pytest 冒烟机验 4 项（详见 #10 决议）；M2 原则「一区块一片端到端」（树→审计→规则管理→统计）、M3 原则「以四拍倒排每片收口一拍」；实现票 [M1 垂直切片实现](https://github.com/kjiu72063-sudo/skill-observability/issues/11)。
 - [M1 子票1：曳光弹——allow 路径端到端 + demo 生命周期定型](https://github.com/kjiu72063-sudo/skill-observability/issues/12)：`python demo.py` 单命令全链落地（SDK 三原语按 #8 八步/被拦七步、引擎全语义+种子 4 条、查询 API×3 + SSE 回放/实时/续传、replay 档手写 cassette、生命周期=自动首跑→回车同进程重跑→Ctrl+C）；code-review 两轴两缺陷（观察期 span 标记漏写、审计 payload 截断）TDD 红→绿修掉；人验+新会话复查双过（1717480 / cbf328c / f440b24）。
+- [M1 子票2：观察期与拦截两拍打通](https://github.com/kjiu72063-sudo/skill-observability/issues/13)：三拍全程落地——观察期（r1b 命中不拦 verdict=allow）+ 拦截（r1 短路、fn 不执行、PolicyBlocked 子任务边界捕获、终止报告）+ 审计恰三行×重跑不翻倍；root 终态 UNSET（拦截语义由工具 span ERROR 承载）；f440b24 观察期标记端到端首验为真；缺陷 7999fbf（db.py json_extract 含点键需引号路径）裁定条款行使合规；评审两拍过（Spec 0 finding、唯一软违规 8db0f2d 修掉）+ 用户亲手 QA 过（9c45942/7999fbf/8db0f2d）。
 
 ## Not yet specified
 
@@ -32,6 +33,8 @@
 - 测试策略与 CI 形态（演示项目，最小集待定）。
 - README 架构章节的叙事结构。
 - 契约 policy §1.3「匹配片段为命中的叶子文本」措辞歧义（实现按 §3.2 示例取 m.group(0)）——下次动契约时补一句「匹配片段=首个命中叶子的 m.group(0)」，防 M2 实现者再读歧义。
+- 契约 trace §2.1 示例 SQL 的 json_extract 路径含点键未加引号（$.'skill_observability.verdict'）——照抄会踩 #13 修过的同一个坑；下次动契约时补注「含点键需 $."key" 引号路径」，与 M2 统计/前端查询的实现一起对齐。
+- 属性键字面量（skill_observability.verdict/matched_rule/error.type=policy.block）在 sdk/printing/db 三处散落——#13 同族 bug 的温床；M2 写统计/前端查询时收编为共享常量（源头 sdk.py，本票禁改未动）。
 
 ## Out of scope
 
@@ -40,6 +43,8 @@
 - 登录、多用户、多租户（agent 身份用配置内 agent_id 区分）。
 - ML/LLM 智能违规检测（规则只走声明式匹配：正则/列表/上下文条件）。
 - 告警通知与 BI 分析（邮件/Webhook/周报/趋势预测；看板只展示当下与近 7 天）。
+
+
 
 
 
