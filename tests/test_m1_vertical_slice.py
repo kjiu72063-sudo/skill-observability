@@ -4,9 +4,10 @@
   ``TestClient`` 打 ASGI app，直接调用可导入的场景入口
   :func:`scenario.customer_service.agent.run_customer_service_turn`。
 - replay 档（vcr cassette ``record_mode="none"``）：零网络、零密钥、可重复。
-- 覆盖路径包含 #12/#13 修过的缺陷位：观察期 span 标记（#12 评审缺陷）、
-  audit payload 字节截断（#12 评审缺陷）、含点键的 ``blocked`` json_extract 路径
-  （#13 bug）。
+- 覆盖 #12/#13 修过的三条缺陷位（回归保护，经变异抽查验证有效）：
+  ① 观察期 span 标记（f440b24①）→ ``test_observation_span_attributes``；
+  ② audit payload 8KB 字节截断（f440b24②）→ ``test_audit_payload_truncated_over_cap``；
+  ③ 含点键的 ``blocked`` json_extract 引号路径（7999fbf）→ ``test_traces_list_blocked_true``。
 - 只覆盖本票验收，不为地图 fog「测试策略与 CI」定全局（#10 原文）。
 """
 
@@ -61,19 +62,17 @@ def run(deps) -> dict:
     """跑一遍三拍全程（allow → 观察期 → block → 终止报告），返回结构化结果。"""
     run_start = time.time_ns()
     result = run_customer_service_turn(deps.sdk, deps.llm, DEMO_USER_MESSAGE)
-    return {
-        "trace_id": result.trace_id,
-        "answer": result.answer,
-        "deps": deps,
-        "run_start": run_start,
-    }
+    return {"trace_id": result.trace_id, "answer": result.answer, "run_start": run_start}
 
 
 @pytest.fixture()
-def spans_by_id(run) -> dict:
+def client(deps):
+    return TestClient(create_app(deps.storage, deps.engine, deps.hub))
+
+
+@pytest.fixture()
+def spans_by_id(deps, client, run) -> dict:
     """本 trace 全部 span，按 span_id 索引（经查询 API 拉回，端到端真实）。"""
-    deps = run["deps"]
-    client = TestClient(create_app(deps.storage, deps.engine, deps.hub))
     resp = client.get(f"/api/traces/{run['trace_id']}")
     assert resp.status_code == 200
     return {s["span_id"]: s for s in resp.json()["spans"]}
@@ -126,6 +125,7 @@ class TestSpanTable:
     def test_observation_span_attributes(
         self, run, spans_by_id  # 机验6：观察期命中 span verdict=allow + matched_rule=r1b 且 status UNSET
     ):
+        # 回归①（#12 评审缺陷 f440b24）：观察期命中必须落 verdict/matched_rule 两键
         observed = [s for s in spans_by_id.values()
                     if s["attributes"].get("skill_observability.matched_rule") == "r1b-pii-phone-audit"]
         assert len(observed) == 1
@@ -153,14 +153,14 @@ class TestSpanTable:
 class TestAuditTable:
     """机验7：audit 三行语义正确（verdict/rule_id/payload/trace 关联）；event_log = span×2。"""
 
-    def test_audit_three_rows(self, run, spans_by_id):
-        deps = run["deps"]
-        client = TestClient(create_app(deps.storage, deps.engine, deps.hub))
-        items, total = deps.storage.list_audits(
-            verdict=None, agent_id=None, tool_name=None, rule_id=None,
-            from_ns=run["run_start"], to_ns=None, page=1, page_size=100,
-        )
-        assert total == 3  # 机验7：三行语义——恰三行（重跑不翻倍由 demo 生命周期保证）
+    def test_audit_three_rows(self, run, client, spans_by_id):
+        # 机验7：audit 表三行语义正确——走查询 API 层（policy §3.2：payload 为
+        # 已解析 JSON 对象，round-trip 端到端）；from 过滤与 printing.py 同款
+        resp = client.get("/api/audits", params={"from": run["run_start"], "page_size": 100})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 3  # 机验7：三行语义——本 run 恰三行
+        items = body["items"]
         by_tool = {a["tool_name"]: a for a in items}
 
         # ① 查订单 allow、rule_id=NULL（#10 人验4①）
@@ -191,8 +191,38 @@ class TestAuditTable:
             span = spans_by_id[a["span_id"]]
             assert span["name"] == f"execute_tool {a['tool_name']}"
 
-    def test_event_log_count_is_two_times_spans(self, run, spans_by_id):
-        deps = run["deps"]
+    def test_audit_payload_truncated_over_cap(self, deps, client):
+        # 回归②（#12 评审缺陷 f440b24）：payload 超 8KB **字节**上限——截断保持可解析、
+        # payload_truncated 与「内容是否真被切」严格同步（policy §3.1）。旧缺陷下
+        # 读侧 json.loads 抛错、GET /api/audits 500。
+        huge = {"note": "汉" * 9000}  # UTF-8 每字 3B ≈ 27KB，超 8192B
+        assert len(json.dumps(huge, ensure_ascii=False).encode("utf-8")) > 8 * 1024
+        with deps.sdk.agent_run("customer-service"):
+            deps.sdk.execute_tool("query_user_db", huge, lambda: {"found": False})
+            # 阴性对照：同 run 一个未超限调用，标志应保持 0
+            deps.sdk.execute_tool(
+                "query_user_db", {"order_id": "20241025001"}, lambda: {"found": True}
+            )
+
+        resp = client.get("/api/audits", params={"page_size": 100})
+        assert resp.status_code == 200  # 读侧 round-trip 不抛错（缺陷位回归）
+        items = resp.json()["items"]
+        assert len(items) == 2
+
+        truncated = [a for a in items if a["payload_truncated"]]
+        assert len(truncated) == 1  # 恰超限那行置 1
+        row = truncated[0]
+        # 截断语义：保留原内容前缀（#12 修复的字节预算落刀）
+        assert huge["note"].startswith(row["payload"]["note"])
+        assert row["payload"]["note"] != huge["note"]
+        stored_bytes = len(json.dumps(row["payload"], ensure_ascii=False).encode("utf-8"))
+        assert stored_bytes <= 8 * 1024  # 契约 policy §3.1：8KB 字节上限
+
+        small = [a for a in items if not a["payload_truncated"]]
+        assert len(small) == 1
+        assert small[0]["payload"] == {"order_id": "20241025001"}  # 未超限原样
+
+    def test_event_log_count_is_two_times_spans(self, deps, spans_by_id):
         events = deps.storage.replay_events(after_id=0)
         # 机验7：event_log 条数 = span 数 ×2（每 span 恰一条 span.start + 一条 span.end）
         assert len(events) == SPAN_COUNT_PER_RUN * 2
@@ -215,10 +245,9 @@ class TestQueryApis:
     """机验8：GET /api/traces blocked=true；详情平铺数组可建树；audits?verdict=block 恰一行。"""
 
     def test_traces_list_blocked_true(
-        self, run  # 机验8：GET /api/traces 该 trace blocked=true（#13 修复路径回归）
+        self, run, client  # 机验8：GET /api/traces 该 trace blocked=true
     ):
-        deps = run["deps"]
-        client = TestClient(create_app(deps.storage, deps.engine, deps.hub))
+        # 回归③（#13 bug 7999fbf）：含点键 json_extract 必须引号路径，裸路径恒 NULL
         resp = client.get("/api/traces", params={"agent_id": "customer-service"})
         assert resp.status_code == 200
         body = resp.json()
@@ -229,10 +258,8 @@ class TestQueryApis:
         assert item["span_count"] == SPAN_COUNT_PER_RUN
 
     def test_trace_detail_flat_array_builds_tree(
-        self, run  # 机验8：GET /api/traces/{id} 平铺数组按 parent_span_id 可建树
+        self, run, client  # 机验8：GET /api/traces/{id} 平铺数组按 parent_span_id 可建树
     ):
-        deps = run["deps"]
-        client = TestClient(create_app(deps.storage, deps.engine, deps.hub))
         resp = client.get(f"/api/traces/{run['trace_id']}")
         assert resp.status_code == 200
         spans = resp.json()["spans"]
@@ -248,10 +275,8 @@ class TestQueryApis:
                 assert s["parent_span_id"] in ids
 
     def test_audits_verdict_block_exactly_one(
-        self, run  # 机验8：GET /api/audits?verdict=block 恰一行
+        self, run, client  # 机验8：GET /api/audits?verdict=block 恰一行
     ):
-        deps = run["deps"]
-        client = TestClient(create_app(deps.storage, deps.engine, deps.hub))
         resp = client.get("/api/audits", params={"verdict": "block"})
         assert resp.status_code == 200
         body = resp.json()
@@ -268,9 +293,8 @@ class TestBehavior:
     """机验9：block 时 fn 未执行（计数）；PolicyBlocked 携带 matched_rule/trace_id/span_id。"""
 
     def test_blocked_fn_not_executed(
-        self, run  # 机验9：block 时 fn 未执行（计数断言）
+        self, deps  # 机验9：block 时 fn 未执行（计数断言）
     ):
-        deps = run["deps"]
         calls: list[str] = []
 
         # 直调 SDK 派发入口：r1 命中即 block，fn 计数保持 0（被拦七步，#8）
@@ -279,7 +303,7 @@ class TestBehavior:
             return {"verified": True}
 
         with deps.sdk.agent_run("customer-service"):
-            with pytest.raises(PolicyBlocked) as e1:
+            with pytest.raises(PolicyBlocked) as exc_info:
                 deps.sdk.execute_tool(
                     "verify_customer_id",
                     {"id_card": "110101199003071234"},
@@ -287,7 +311,7 @@ class TestBehavior:
                 )
         assert calls == []  # 机验9：block 时 fn 未执行
 
-        pb = e1.value
+        pb = exc_info.value
         assert pb.matched_rule == "r1-pii-id-card"
         assert pb.trace_id and len(pb.trace_id) == 32
         assert pb.span_id and len(pb.span_id) == 16
@@ -295,9 +319,8 @@ class TestBehavior:
         assert pb.span_id in {s["span_id"] for s in
                               deps.storage.get_trace_spans(pb.trace_id)}
 
-    def test_allow_fn_executed_exactly_once(self, run):
+    def test_allow_fn_executed_exactly_once(self, deps):
         # 阴性对照（#12 TDD 同款）：未命中 allow 时 fn 执行且恰一次
-        deps = run["deps"]
         calls: list[str] = []
 
         def probe_fn():
@@ -311,15 +334,17 @@ class TestBehavior:
         assert calls == ["query_user_db"]
         assert result == {"found": True}
 
-    def test_policy_blocked_carries_identifiers(self, run):
+    def test_policy_blocked_carries_identifiers(self, deps):
         # 机验9：PolicyBlocked 携带 matched_rule / trace_id / span_id（独立断言便于逐条勾表）
-        deps = run["deps"]
+        def must_not_run():
+            raise AssertionError("fn 不应执行")
+
         with deps.sdk.agent_run("customer-service") as root:
             with pytest.raises(PolicyBlocked) as exc_info:
                 deps.sdk.execute_tool(
                     "verify_customer_id",
                     {"id_card": "110101199003071234"},
-                    lambda: (_ for _ in ()).throw(AssertionError("fn 不应执行")),
+                    must_not_run,
                 )
         pb = exc_info.value
         assert pb.matched_rule == "r1-pii-id-card"
