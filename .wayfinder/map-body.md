@@ -25,6 +25,7 @@
 - [M1 垂直切片验收物定死](https://github.com/kjiu72063-sudo/skill-observability/issues/10)：可见产出 = A 真实命令输出（`python demo.py` 单命令、LLM replay 档、打印走查询 API 不直读 DB，不碰 React，与 #2 并行）；垂直范围 = allow / 观察期 / block 三条端到端路径全通到「可查询」（进：chat 原语、引擎全语义、查询 API×3、SSE 推送；不进：规则 CRUD+热生效→M2 规则管理区块）；验收 = 人验 5 项 + pytest 冒烟机验 4 项（详见 #10 决议）；M2 原则「一区块一片端到端」（树→审计→规则管理→统计）、M3 原则「以四拍倒排每片收口一拍」；实现票 [M1 垂直切片实现](https://github.com/kjiu72063-sudo/skill-observability/issues/11)。
 - [M1 子票1：曳光弹——allow 路径端到端 + demo 生命周期定型](https://github.com/kjiu72063-sudo/skill-observability/issues/12)：`python demo.py` 单命令全链落地（SDK 三原语按 #8 八步/被拦七步、引擎全语义+种子 4 条、查询 API×3 + SSE 回放/实时/续传、replay 档手写 cassette、生命周期=自动首跑→回车同进程重跑→Ctrl+C）；code-review 两轴两缺陷（观察期 span 标记漏写、审计 payload 截断）TDD 红→绿修掉；人验+新会话复查双过（1717480 / cbf328c / f440b24）。
 - [M1 子票2：观察期与拦截两拍打通](https://github.com/kjiu72063-sudo/skill-observability/issues/13)：三拍全程落地——观察期（r1b 命中不拦 verdict=allow）+ 拦截（r1 短路、fn 不执行、PolicyBlocked 子任务边界捕获、终止报告）+ 审计恰三行×重跑不翻倍；root 终态 UNSET（拦截语义由工具 span ERROR 承载）；f440b24 观察期标记端到端首验为真；缺陷 7999fbf（db.py json_extract 含点键需引号路径）裁定条款行使合规；评审两拍过（Spec 0 finding、唯一软违规 8db0f2d 修掉）+ 用户亲手 QA 过（9c45942/7999fbf/8db0f2d）。
+- [M1 子票3：冒烟机验与 #11 收口](https://github.com/kjiu72063-sudo/skill-observability/issues/14)：机验 4 项落地 13 条全绿（断言逐条对应 #10 机验 6–9；进程内装配+TestClient+直调场景入口，不走交互循环）；变异抽查 5 处全被抓，#12/#13 三条被修路径全有具名回归；评审两拍（主 finding 截断回归 e536a8a、P3 死参数清理 43b8acb）+ 用户亲手 QA 过（b9bc62c/e536a8a/43b8acb）。**#11 随之关闭——M1 实现段完成（3/3）**，地图前沿剩 #2（原型，M2 硬门禁）/#9。
 
 ## Not yet specified
 
