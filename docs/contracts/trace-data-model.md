@@ -73,6 +73,7 @@ CREATE TABLE event_log (
 | `agent_id` | string | — | 精确匹配 root span 的 `agent_id` |
 | `from` | int（unix nano） | — | root `start_time_unix_nano` ≥ from |
 | `to` | int（unix nano） | — | root `start_time_unix_nano` ≤ to |
+| `live` | bool | `false` | `live=true` 时仅返回进行中 trace（root `end_time_unix_nano IS NULL`）；统计卡「进行中 Trace」消费此参数（#2 定案） |
 | `page` | int | 1 | 1-based |
 | `page_size` | int | 20 | 1–100 |
 
@@ -102,7 +103,7 @@ CREATE TABLE event_log (
 ```
 
 - `span_count`：该 trace 的 span 总数（聚合子查询 `COUNT(*)`）。
-- `blocked`：**仅展示字段，不是过滤参数**——任一 span 的 `json_extract(attributes,'$.skill_observability.verdict') = 'block'` 即 true，供行内徽标用。
+- `blocked`：**仅展示字段，不是过滤参数**——任一 span 的 `json_extract(attributes,'$.skill_observability.verdict') = 'block'` 即 true，供行内徽标用。**实现注意：`json_extract` 路径含点键（如 `skill_observability.verdict`）必须写成引号路径 `$."skill_observability.verdict"`**——非引号路径会被 SQLite 解析为嵌套键 `skill_observability` → `verdict` 而永远匹配不上（#13 踩过的坑）。
 - `status_code`：root span 自身状态。「查违规」诉求由审计区块（#7）承担。
 
 ### 2.2 `GET /api/traces/{trace_id}` — trace 详情
@@ -135,7 +136,7 @@ CREATE TABLE event_log (
 
 ### 2.3 过滤参数的演进约定
 
-`status` / `blocked` 过滤参数**不进本契约**；看板原型（#2）确认需要时再加，新增参数向后兼容，不改既有响应形状。
+`status` / `blocked` 过滤参数**不进本契约**；看板原型（#2）确认需要时再加，新增参数向后兼容，不改既有响应形状。`live` 参数已按 #2 定案加入 §2.1。
 
 ## 3. 实时推送（SSE 事件契约）
 
