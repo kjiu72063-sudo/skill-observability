@@ -53,8 +53,10 @@ interface PagedTotal {
 
 async function fetchTotal(path: string): Promise<number> {
   const body = await apiGet<PagedTotal>(`${path}?page_size=1`);
+  // 形状守卫：total 缺失/非数字不是 HTTP 错误，不装 ApiError（调用方 catch 后
+  // 徽标落「—」，语义与 5xx 一致）；SSOT 见 losslessJson 对超界整数的字符串承载
   if (typeof body.total !== "number") {
-    throw new ApiError(200, `total 缺失或非数字（${path}?page_size=1）`);
+    throw new Error(`total 缺失或非数字（${path}?page_size=1）`);
   }
   return body.total;
 }

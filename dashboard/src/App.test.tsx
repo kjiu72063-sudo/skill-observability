@@ -23,12 +23,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** 这四个用例只验路由行为、不碰数据——统一 reject 掉 fetch，防意外出网。 */
+function stubFetchRejected() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
+  );
+}
+
 describe("看板壳导航（M2-03 #18）", () => {
   it("侧边栏四项导航齐全，默认路由落在 /trace", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
-    );
+    stubFetchRejected();
     renderShellAtHash("");
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     for (const label of ["Trace", "审计日志", "规则管理", "统计卡片"]) {
@@ -40,10 +45,7 @@ describe("看板壳导航（M2-03 #18）", () => {
   });
 
   it("点击导航 URL 随路由变化，占位页显示区块名", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
-    );
+    stubFetchRejected();
     renderShellAtHash("");
     fireEvent.click(screen.getByRole("link", { name: /审计日志/ }));
     expect(window.location.hash).toBe("#/audit");
@@ -57,10 +59,7 @@ describe("看板壳导航（M2-03 #18）", () => {
   });
 
   it("直接以 #/audit 打开（模拟刷新落位），落在审计占位页且选中态正确", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
-    );
+    stubFetchRejected();
     renderShellAtHash("#/audit");
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("审计日志");
     const auditLink = screen.getByRole("link", { name: /审计日志/ });
@@ -70,10 +69,7 @@ describe("看板壳导航（M2-03 #18）", () => {
   });
 
   it("未知路由重定向回 /trace（静态托管无 404 页，兜底落位）", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
-    );
+    stubFetchRejected();
     renderShellAtHash("#/nope");
     expect(window.location.hash).toBe("#/trace");
   });

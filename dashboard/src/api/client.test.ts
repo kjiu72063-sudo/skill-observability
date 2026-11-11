@@ -34,23 +34,27 @@ describe("徽标 total 取数（M2-03 #18）", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/audits?page_size=1", { signal: undefined });
   });
 
-  it("纳秒字符串原样进组件树，total 不受无损改写影响（走真实基座）", async () => {
-    // total 在真实响应里与 *_unix_nano 同行——确认封装只取 total、解析基座照常工作
-    vi.stubGlobal(
-      "fetch",
-      mockOk({
-        items: [
-          {
-            trace_id: "abc",
-            start_time_unix_nano: 1794389455893772000,
-          },
-        ],
-        page: 1,
-        page_size: 1,
-        total: 2,
-      })
-    );
+  it("纳秒字段字符串承载进组件树，total 不受无损改写影响（走真实基座）", async () => {
+    // 线路形状按 #2 决议：纳秒 >2^53 由后端以 JSON 字符串下发（19 位 number 字面量
+    // 在 JS 解析时已静默失真，2^53≈9.0e15 < 1.79e18）——fixture 用字符串，
+    // 并断言 parseLossless 对已是字符串的纳秒值原样保串。
+    const body = {
+      items: [{ trace_id: "abc", start_time_unix_nano: "1794389455893772000" }],
+      page: 1,
+      page_size: 1,
+      total: 2,
+    };
+    vi.stubGlobal("fetch", mockOk(body));
+    const parsed = (await import("./losslessJson")).parseLossless(JSON.stringify(body)) as {
+      items: Array<{ start_time_unix_nano: string }>;
+    };
+    expect(parsed.items[0].start_time_unix_nano).toBe("1794389455893772000");
     await expect(fetchTraceTotal()).resolves.toBe(2);
+  });
+
+  it("total 缺失或非数字（形状守卫）→ 拒绝，徽标层 catch 落「—」", async () => {
+    vi.stubGlobal("fetch", mockOk({ items: [], page: 1, page_size: 1 }));
+    await expect(fetchTraceTotal()).rejects.toThrow("total 缺失或非数字（/traces?page_size=1）");
   });
 
   it("非 2xx 抛 ApiError（status + detail，形状同基座约定）", async () => {

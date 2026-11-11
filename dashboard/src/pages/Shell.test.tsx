@@ -10,13 +10,18 @@ import { render, screen } from "@testing-library/react";
 
 import Shell from "./Shell";
 
+/** 本用例只验壳结构与占位、不碰数据——reject 掉 fetch，防意外出网。 */
+function stubFetchRejected() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
+  );
+}
+
 describe("Shell 壳页（M2-03）", () => {
   it("顶栏品牌 + 侧边栏四项导航 + 路由出口，无业务区块内容", () => {
     // HashRouter 已内置于 Shell（M2-03 收编 main.tsx 越界后），直接渲染
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(() => Promise.reject(new Error("no fetch in this test")))
-    );
+    stubFetchRejected();
     render(<Shell />);
     // 品牌「SIGIL」跨 SIG<b>IL</b> 两元素——用函数匹配器取 textContent
     expect(

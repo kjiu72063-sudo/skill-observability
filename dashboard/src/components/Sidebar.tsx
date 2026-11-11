@@ -13,20 +13,28 @@ import { NavLink } from "react-router-dom";
 import NavBadge from "./NavBadge";
 import { fetchAuditTotal, fetchTraceTotal } from "../api/client";
 
-const icon = (paths: string): React.ReactElement => (
+const icon = (
+  paths: string,
+  circles?: ReadonlyArray<{ cx: number; cy: number; r: number }>
+): React.ReactElement => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
     {paths.split("|").map((d) => (
       <path key={d} d={d} strokeLinecap="round" strokeLinejoin="round" />
     ))}
+    {(circles ?? []).map((c) => (
+      <circle key={`${c.cx}-${c.cy}-${c.r}`} cx={c.cx} cy={c.cy} r={c.r} />
+    ))}
   </svg>
 );
 
-/* 图标 path 与原型逐字一致（原型分支 kanban-infoarch-wireframe.html 379–382 行）。
+/* 图标与原型逐字一致（原型分支 kanban-infoarch-wireframe.html 379–382 行；
+ * rules = 4 辐条 path + 中心圆 <circle cx=12 cy=12 r=3.4>，HITL 确认形态不可缺元素）。
  * badge: "placeholder"=恒「—」（规则，等 M2-09）；省略 = 无徽标（统计）。 */
 const ITEMS: ReadonlyArray<{
   to: string;
   label: string;
   paths: string;
+  circles?: ReadonlyArray<{ cx: number; cy: number; r: number }>;
   badge?: "placeholder";
 }> = [
   { to: "/trace", label: "Trace", paths: "M8 6h13M8 12h13M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01" },
@@ -39,6 +47,7 @@ const ITEMS: ReadonlyArray<{
     to: "/rules",
     label: "规则管理",
     paths: "M12 3v3m0 12v3|M3 12h3m12 0h3|M5.6 5.6l2.2 2.2m8.4 8.4 2.2 2.2m0-12.8-2.2 2.2|M7.8 16.2l-2.2 2.2",
+    circles: [{ cx: 12, cy: 12, r: 3.4 }],
     badge: "placeholder",
   },
   { to: "/stats", label: "统计卡片", paths: "M3 3v18h18|M7 15l4-5 3.5 3L19 7" },
@@ -87,7 +96,7 @@ export default function Sidebar() {
                 : undefined;
         return (
           <NavLink key={item.to} to={item.to} className="rail-btn">
-            {icon(item.paths)}
+            {icon(item.paths, item.circles)}
             <span className="lbl">{item.label}</span>
             {badge === undefined ? null : <NavBadge value={badge} />}
           </NavLink>
