@@ -26,6 +26,7 @@
 - [M1 子票1：曳光弹——allow 路径端到端 + demo 生命周期定型](https://github.com/kjiu72063-sudo/skill-observability/issues/12)：`python demo.py` 单命令全链落地（SDK 三原语按 #8 八步/被拦七步、引擎全语义+种子 4 条、查询 API×3 + SSE 回放/实时/续传、replay 档手写 cassette、生命周期=自动首跑→回车同进程重跑→Ctrl+C）；code-review 两轴两缺陷（观察期 span 标记漏写、审计 payload 截断）TDD 红→绿修掉；人验+新会话复查双过（1717480 / cbf328c / f440b24）。
 - [M1 子票2：观察期与拦截两拍打通](https://github.com/kjiu72063-sudo/skill-observability/issues/13)：三拍全程落地——观察期（r1b 命中不拦 verdict=allow）+ 拦截（r1 短路、fn 不执行、PolicyBlocked 子任务边界捕获、终止报告）+ 审计恰三行×重跑不翻倍；root 终态 UNSET（拦截语义由工具 span ERROR 承载）；f440b24 观察期标记端到端首验为真；缺陷 7999fbf（db.py json_extract 含点键需引号路径）裁定条款行使合规；评审两拍过（Spec 0 finding、唯一软违规 8db0f2d 修掉）+ 用户亲手 QA 过（9c45942/7999fbf/8db0f2d）。
 - [M1 子票3：冒烟机验与 #11 收口](https://github.com/kjiu72063-sudo/skill-observability/issues/14)：机验 4 项落地 13 条全绿（断言逐条对应 #10 机验 6–9；进程内装配+TestClient+直调场景入口，不走交互循环）；变异抽查 5 处全被抓，#12/#13 三条被修路径全有具名回归；评审两拍（主 finding 截断回归 e536a8a、P3 死参数清理 43b8acb）+ 用户亲手 QA 过（b9bc62c/e536a8a/43b8acb）。**#11 随之关闭——M1 实现段完成（3/3）**，地图前沿剩 #2（原型，M2 硬门禁）/#9。
+- [M2-01 契约同步落 main](https://github.com/kjiu72063-sudo/skill-observability/issues/16)：prototype/kanban-infoarch 三契约文件逐字搬运 d5c70f8（policy §3.2 action 参数/§3.3 stats/by-rule 端点/§3.4 统计 8 卡口径/§1.3 匹配片段勘误/§6 更新、trace §2.1 live 参数/引号路径注记/§2.3 更新、CONTEXT「看板」术语四区块+SIGIL）；防漂移 diff 为空 + 13 冒烟全绿，逐字性与白名单 Spec 轴实证过、无分支外文本；评审两拍过（第一拍双轴：唯一可执行 finding=残留雾注未入清单 → 票面补记两条、仓库零改动；第二拍通过）；未解决清单 3 条留裁决不阻塞下游（纳秒注记缺失、policy :248 残留雾注矛盾、继承判断项）。**§1.3/引号路径两条地图雾项随本票毕业。M2 看板段 1/12**，下一票 #17（Vite 脚手架）。
 
 ## Not yet specified
 
@@ -33,9 +34,10 @@
 - 统计卡片的具体口径与数量（四拍只承诺「若干统计卡」）。
 - 测试策略与 CI 形态（演示项目，最小集待定）。
 - README 架构章节的叙事结构。
-- 契约 policy §1.3「匹配片段为命中的叶子文本」措辞歧义（实现按 §3.2 示例取 m.group(0)）——下次动契约时补一句「匹配片段=首个命中叶子的 m.group(0)」，防 M2 实现者再读歧义。
-- 契约 trace §2.1 示例 SQL 的 json_extract 路径含点键未加引号（$.'skill_observability.verdict'）——照抄会踩 #13 修过的同一个坑；下次动契约时补注「含点键需 $."key" 引号路径」，与 M2 统计/前端查询的实现一起对齐。
 - 属性键字面量（skill_observability.verdict/matched_rule/error.type=policy.block）在 sdk/printing/db 三处散落——#13 同族 bug 的温床；M2 写统计/前端查询时收编为共享常量（源头 sdk.py，本票禁改未动）。
+- 契约 policy-and-audit.md :248 残留雾注「统计端点不在本契约（口径挂 #2 原型确认，地图 fog）」与已落地的 §3.3/§3.4 直接矛盾——#16 评审两拍认定（继承自分支逐字内容，搬运不代修）；下次动 policy 契约时删除该行并顺检 §3.5 挂节位置（统计端点引用应收在 §4 管理 API 或独立节）。
+- 「纳秒时间戳 >2^53 必须 JSON 字符串承载」的契约注记缺失——#2 决议评论 6761569028 是权威出处（#16 验收第 4 条钉死不代补）；下次动 trace/policy 契约时补注，前端各票开工必读该评论。
+- 契约 policy §3.4 尾句「from/to 各端点已支持」对 §3.3 stats/by-rule 失准（该端点无 from/to 参数）、观察期口径 :203/:238 两处重复——#16 评审第一拍记录的继承判断项，下次动契约时一并收敛。
 
 ## Out of scope
 
