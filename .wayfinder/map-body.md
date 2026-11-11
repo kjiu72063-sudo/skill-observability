@@ -30,8 +30,6 @@
 
 ## Not yet specified
 
-- 看板视觉设计与组件选型细节（原型确认后再定）。
-- 统计卡片的具体口径与数量（四拍只承诺「若干统计卡」）。
 - 测试策略与 CI 形态（演示项目，最小集待定）。
 - README 架构章节的叙事结构。
 - 属性键字面量（skill_observability.verdict/matched_rule/error.type=policy.block）在 sdk/printing/db 三处散落——#13 同族 bug 的温床；M2 写统计/前端查询时收编为共享常量（源头 sdk.py，本票禁改未动）。
