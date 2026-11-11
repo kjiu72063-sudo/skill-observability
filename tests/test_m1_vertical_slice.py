@@ -358,20 +358,16 @@ class TestBehavior:
 class TestDashboardStaticHosting:
     """M2-02（#17）新增静态托管断言：壳页 index.html 托管在场 + /api/* 不受 StaticFiles 影响。
 
-    测试装配沿用 create_app（纯净、无 StaticFiles）——静态挂载在 demo 装配层
-    （demo.py DemoDeps.make_asgi_app），本类按 demo 同款方式包一层验证托管行为。
+    测试装配沿用 create_app（纯净、无 StaticFiles）——静态挂载在 demo 装配层，
+    本类复用 demo.mount_dashboard（与 demo.py 完全同一挂载逻辑与参数）验证托管行为。
     """
 
     def _mount_dashboard(self, client):
-        from fastapi.staticfiles import StaticFiles
+        from demo import dashboard_state, mount_dashboard
 
-        from demo import DASHBOARD_DIST
-
-        if not DASHBOARD_DIST.is_dir():  # dist 缺失属环境问题（未跑 npm run build），跳过并明示
+        if dashboard_state() != "ready":  # dist 缺失属环境问题（未跑 npm run build），跳过并明示
             pytest.skip("dashboard/dist 不存在：先 cd dashboard && npm run build")
-        client.app.mount(
-            "/", StaticFiles(directory=DASHBOARD_DIST, html=True), name="dashboard-test"
-        )
+        mount_dashboard(client.app)
 
     def test_dashboard_index_served_with_shell_mount_point(self, client):
         # GET / 返回 index.html，含壳页挂载点 <div id="root">

@@ -16,8 +16,8 @@
  * 扫描器逐字符跳过字符串字面量（含转义），只在结构位置识别数值。
  */
 
-/** 保留（未改写）的解析结果类型：改写的字段值是 string，其余由 JSON.parse 原生产出。 */
-export type LosslessJson = Record<string, unknown>;
+/** 无损解析结果：与 JSON.parse 一样顶层可为对象或数组（改写字段的值是 string）。 */
+export type LosslessParsed = Record<string, unknown> | unknown[];
 
 /**
  * 数值字面量是否为超出安全整数范围的整数（含指数写法：1e30、1.5E22）。
@@ -155,6 +155,6 @@ function findPrecedingKey(text: string, pos: number): string | null {
 }
 
 /** 无损解析：`*_unix_nano` 与超安全范围整数以字符串承载，其余与 JSON.parse 一致。 */
-export function parseLossless(text: string): LosslessJson {
-  return JSON.parse(rewriteNumericLiterals(text)) as LosslessJson;
+export function parseLossless(text: string): LosslessParsed {
+  return JSON.parse(rewriteNumericLiterals(text)) as LosslessParsed;
 }

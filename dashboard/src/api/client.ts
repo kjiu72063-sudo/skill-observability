@@ -8,7 +8,7 @@
  * - 泛型 <T> 由各票按契约逐端点声明（本票不预定义任何端点类型）。
  */
 
-import { parseLossless, type LosslessJson } from "./losslessJson";
+import { parseLossless, type LosslessParsed } from "./losslessJson";
 
 export const API_BASE = "/api";
 
@@ -37,7 +37,7 @@ function extractDetail(raw: string): string {
 }
 
 /** GET /api 下相对路径，返回无损解析后的 JSON。 */
-export async function apiGet<T = LosslessJson>(path: string, signal?: AbortSignal): Promise<T> {
+export async function apiGet<T = LosslessParsed>(path: string, signal?: AbortSignal): Promise<T> {
   const resp = await fetch(`${API_BASE}${path}`, { signal });
   const text = await resp.text();
   if (!resp.ok) throw new ApiError(resp.status, extractDetail(text));
