@@ -1,0 +1,21 @@
+/*
+ * 基础样式（M2-02 #17）：SIGIL 深空暗底铺底。布局类样式待 M2-03 起按区块补，
+ * 本票只铺 body 级基底与壳页所需，不做任何区块 UI。
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg0);
+  color: var(--ink);
+  font: 14px/1.6 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}

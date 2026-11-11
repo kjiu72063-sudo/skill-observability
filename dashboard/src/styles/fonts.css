@@ -1,0 +1,30 @@
+/*
+ * 字体自托管（M7，#2 决议：面试现场断网兜底）。
+ * 三族均为 Google Fonts 可变字体 latin 子集（单文件覆盖全字重，共约 100KB），
+ * 全仓库无任何在线字体/CDN 引用（验收 grep：无 fonts.googleapis、无 https://cdn）。
+ * 中文正文回退系统栈（tokens.css --font-ui/-m），无需打包中文子集。
+ */
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/space-grotesk-var-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/inter-var-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-var-latin.woff2") format("woff2");
+}

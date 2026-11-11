@@ -8,3 +8,13 @@ demo.db
 
 # 测试/工具缓存
 .pytest_cache/
+
+# 看板前端（M2-02 #17）：依赖与构建产物不进 git，源码进
+dashboard/node_modules/
+dashboard/dist/
+
+# 原型评审遗留的临时 serve 目录（#2 收尾账，M2-02 顺带收编）
+_tmp_proto_serve/
+
+# TS 增量构建缓存
+dashboard/*.tsbuildinfo

@@ -27,6 +27,8 @@ if __package__ in (None, ""):  # 直接以脚本运行（python demo.py，任意
 try:
     import uvicorn
 
+    from fastapi.staticfiles import StaticFiles
+
     from skill_observability.app import create_app
     from skill_observability.db import Storage
     from skill_observability.engine import PolicyEngine
@@ -51,6 +53,8 @@ except ImportError as e:  # 依赖未装进当前解释器（如 anaconda base�
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "demo.db"
 SEED_PATH = BASE_DIR / "seed" / "rules.json"
+# M2-02（#17）：看板构建产物目录（dashboard/ npm run build 产出）；缺它只影响页面、不影响 API
+DASHBOARD_DIST = BASE_DIR / "dashboard" / "dist"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 
@@ -81,7 +85,34 @@ class DemoDeps:
         return f"http://{HOST}:{self.port}"
 
     def make_asgi_app(self):
-        return create_app(self.storage, self.engine, self.hub)
+        app = create_app(self.storage, self.engine, self.hub)
+        # M2-02（#17）：看板静态托管挂在 demo 装配层——不进 create_app（测试装配保持纯净）。
+        # /api/* 路由在 create_app 内已先注册，FastAPI 按注册顺序匹配：mount("/") 排在
+        # 所有 API 路由之后，/api/* 永远命中 API 路由、不落进静态文件（冒烟有守卫断言）。
+        if DASHBOARD_DIST.is_dir():
+            app.mount("/", StaticFiles(directory=DASHBOARD_DIST, html=True), name="dashboard")
+        else:
+            # dist 缺失时根路径给构建指引页，而非 404/白屏（#17 验收：明确报错指引）
+            from fastapi.responses import HTMLResponse
+
+            guide = f"""<!doctype html><html lang="zh"><meta charset="utf-8">
+<title>看板未构建</title>
+<body style="background:#0b0e13;color:#eef2f8;font:14px/1.7 system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+<div style="max-width:560px">
+  <h2 style="margin:0 0 12px">看板构建产物缺失（dashboard/dist/ 不存在）</h2>
+  <p style="color:#a9b4c4;margin:0 0 16px">API 与 SSE 正常。构建一次看板后重启本服务：</p>
+  <pre style="background:#10141b;border:1px solid #202733;border-radius:8px;
+    padding:12px 16px;color:#3ee7ff;margin:0">cd dashboard
+npm install
+npm run build</pre>
+</div></body></html>"""
+
+            @app.get("/", include_in_schema=False)
+            async def _dashboard_build_guide() -> HTMLResponse:
+                return HTMLResponse(guide)
+
+        return app
 
 
 def run_demo_turn(deps: DemoDeps) -> str:
@@ -114,10 +145,19 @@ def _start_server(deps: DemoDeps) -> uvicorn.Server:
 def main() -> None:
     port = int(os.environ.get("DEMO_PORT", str(DEFAULT_PORT)))
     deps = DemoDeps(port=port)
+    if not DASHBOARD_DIST.is_dir():
+        sys.stderr.write(
+            "\n[warn] 看板构建产物缺失：dashboard/dist/ 不存在，浏览器打开根路径将 404。\n"
+            "       构建一次即可（需 Node ≥20）：\n"
+            "           cd dashboard && npm install && npm run build\n"
+            "       之后重跑本脚本。API 与 SSE 不受影响，仍可 curl 验证。\n\n"
+        )
     _start_server(deps)
     print("=" * 64)
     print("skill-observability M1 demo（客服场景 · 三拍全程：allow → 观察期 → 拦截）")
     print(f"  查询 API / SSE：{deps.base_url}  （实时流：curl -N {deps.base_url}/api/events）")
+    dashboard_url = f"{deps.base_url}/" if DASHBOARD_DIST.is_dir() else "（dashboard/dist 缺失，未挂载）"
+    print(f"  看板页面：{dashboard_url}")
     print("  生命周期：起服务 → 自动跑一遍 → 回车重跑（同进程，新 trace）/ Ctrl+C 退出")
     print("=" * 64)
 

@@ -1,0 +1,42 @@
+/*
+ * 壳页样式（M2-02 #17）：仅空布局骨架（暗底全屏 + 居中标题占位）。
+ * 区块布局（侧栏/分栏/表格）归 M2-03 及以后，本票不写。
+ */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+}
+
+.shell-title {
+  margin: 0;
+  font: 600 clamp(24px, 3vw, 34px) / 1.2 var(--font-d);
+  letter-spacing: -0.01em;
+  background: var(--grad-head);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.shell-title b {
+  color: var(--cyan);
+  -webkit-text-fill-color: var(--cyan);
+}
+
+.shell-sub {
+  margin: 0;
+  font: 11px var(--font-m);
+  color: var(--ink3s);
+  letter-spacing: 0.08em;
+}

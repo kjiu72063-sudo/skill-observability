@@ -289,6 +289,7 @@ class TestQueryApis:
 
 # ---------------------------------------------------------------- 机验9（#10 条目9）：行为断言
 
+
 class TestBehavior:
     """机验9：block 时 fn 未执行（计数）；PolicyBlocked 携带 matched_rule/trace_id/span_id。"""
 
@@ -350,3 +351,65 @@ class TestBehavior:
         assert pb.matched_rule == "r1-pii-id-card"
         assert pb.trace_id == root.trace_id
         assert isinstance(pb.span_id, str) and len(pb.span_id) == 16
+
+
+# ---------------------------------------------------------------- M2-02（#17）：静态托管冒烟
+
+class TestDashboardStaticHosting:
+    """M2-02（#17）新增静态托管断言：壳页 index.html 托管在场 + /api/* 不受 StaticFiles 影响。
+
+    测试装配沿用 create_app（纯净、无 StaticFiles）——静态挂载在 demo 装配层
+    （demo.py DemoDeps.make_asgi_app），本类按 demo 同款方式包一层验证托管行为。
+    """
+
+    def _mount_dashboard(self, client):
+        from fastapi.staticfiles import StaticFiles
+
+        from demo import DASHBOARD_DIST
+
+        if not DASHBOARD_DIST.is_dir():  # dist 缺失属环境问题（未跑 npm run build），跳过并明示
+            pytest.skip("dashboard/dist 不存在：先 cd dashboard && npm run build")
+        client.app.mount(
+            "/", StaticFiles(directory=DASHBOARD_DIST, html=True), name="dashboard-test"
+        )
+
+    def test_dashboard_index_served_with_shell_mount_point(self, client):
+        # GET / 返回 index.html，含壳页挂载点 <div id="root">
+        self._mount_dashboard(client)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert '<div id="root">' in resp.text  # 壳页挂载点在场
+        # 断网兜底（M7）：产物无在线字体/CDN 引用
+        assert "fonts.googleapis" not in resp.text
+        assert "https://cdn" not in resp.text
+
+    def test_api_routes_unaffected_by_static_mount(self, client, run):
+        # demo 同款挂载后，/api/* 仍走 API 路由（不被静态文件吞掉）
+        self._mount_dashboard(client)
+        resp = client.get("/api/traces", params={"page_size": 1})
+        assert resp.status_code == 200
+        assert resp.json()["total"] >= 1  # 已有 run 在场（fixture 链），API 行为不变
+        # 返回体是 JSON 而非 index.html 兜底（StaticFiles html=True 的 404 fallback 不吞 API）
+        assert "text/html" not in resp.headers["content-type"]
+
+    def test_dashboard_dist_missing_serves_build_guide(self, deps, monkeypatch):
+        # dist 缺失时根路径返回构建指引页（非 404 白屏），API 不受影响
+        import demo as demo_mod
+
+        monkeypatch.setattr(
+            demo_mod, "DASHBOARD_DIST", BASE_DIR / "dashboard" / "dist-nonexistent"
+        )
+        # make_asgi_app 只用 storage/engine/hub 三个依赖——借测试装配构造最小实例
+        minimal = demo_mod.DemoDeps.__new__(demo_mod.DemoDeps)
+        minimal.storage = deps.storage
+        minimal.engine = deps.engine
+        minimal.hub = deps.hub
+        client = TestClient(minimal.make_asgi_app())
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "npm run build" in resp.text  # 指引页含构建命令
+        resp_api = client.get("/api/traces", params={"page_size": 1})
+        assert resp_api.status_code == 200  # API 不受缺失影响
