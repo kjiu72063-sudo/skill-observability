@@ -58,7 +58,7 @@
 Verdict 定稿（对齐 #8）：`Verdict(verdict: "allow"|"block", matched_rule: str|None, reason: str|None)`。
 
 - `matched_rule` 存规则 **id**；`block` 时必非空，`allow` 时仅观察期命中非空。
-- `reason` 为可直接上屏的中文理由：`命中规则 {id}（{name}）：{匹配片段}`；匹配片段为命中的叶子文本（纯工具名规则取工具名），截断至 80 字符。
+- `reason` 为可直接上屏的中文理由：`命中规则 {id}（{name}）：{匹配片段}`；**匹配片段 = 首个命中叶子的 `m.group(0)`**（正则匹配到的子串本身，非整个叶子文本；纯工具名规则取工具名），截断至 80 字符。
 - **不实现**：`allow` 动作短路（白名单压黑名单的二阶逻辑）；第三种 verdict（`warn`）。
 
 ### 1.4 作用域边界
@@ -195,6 +195,56 @@ CREATE INDEX idx_audit_rule    ON audit (rule_id);
 
 - `payload` 返回**已解析的 JSON 对象**（非字符串）；截断行返回截断后的对象。
 - `ORDER BY created_at_unix_nano DESC, id DESC`；OFFSET 分页。
+
+#### 新增过滤参数（#2 原型定案，向后兼容追加）
+
+| 参数 | 取值 | 语义 |
+|---|---|---|
+| `action` | `block` / `audit` | 按命中规则动作过滤。`action=audit` 即「观察期命中」口径：`verdict='allow' AND action='audit'`（命中观察期规则、未被拦）。`action=block` 时行均 `verdict='block'`。不筛选 `rule_id IS NULL` 的未命中行（其 action 为 NULL，任何 action 值都不匹配） |
+| `live` | 不适用于本端点 | `live` 参数属 trace 契约（§2.1 增补），见 trace-data-model.md |
+
+### 3.3 `GET /api/audits/stats/by-rule` — 按规则聚合命中（#2 原型新增端点）
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` | int | 5 | 1–50 |
+| `verdict` | `allow`/`block` | — | 可选，先过滤再聚合 |
+| `agent_id` | string | — | 可选，精确匹配 |
+
+响应（`items` 按 `hits DESC, rule_id ASC` 排序；`hits` 并列取 rule_id 升序，保证 Top1 稳定）：
+
+```json
+{
+  "items": [
+    {"rule_id": "r1-pii-id-card", "rule_name": "客户身份证号外泄", "action": "block", "verdict_block_hits": 4, "verdict_audit_hits": 0, "hits": 4}
+  ],
+  "total": 1
+}
+```
+
+- `hits` = 该规则被命中的审计行数（verdict 不限）；`verdict_block_hits`/`verdict_audit_hits` 为细分。
+- 规则被硬删后，历史审计行的 `rule_id` 仍指向已不存在的规则——聚合按审计行内的 `rule_id`/`rule_name` 快照列统计，不 JOIN rule 表。
+
+### 3.4 统计卡片口径定案（#2 雾区毕业生，8 卡三组）
+
+看板统计区块的卡片与其数据来源**逐卡定死**如下；M2 实现以此为准，不再另行决策：
+
+| # | 卡片 | 口径 | 数据来源 |
+|---|---|---|---|
+| 1 | Trace 总数 | root span 行数（含进行中）；trace=查询聚合视图，非存储实体 | `GET /api/traces?page_size=1` → `total` |
+| 2 | 进行中 Trace | root span `end_time_unix_nano IS NULL` 的行数 | `GET /api/traces?live=true` → `total`（trace 契约 §2.1 新增参数） |
+| 3 | Skill 调用总数 | 审计行数（每次 Skill 调用恰一行，无论 verdict） | `GET /api/audits?page_size=1` → `total` |
+| 4 | 拦截次数 | `verdict='block'` 的审计行数 | `GET /api/audits?verdict=block&page_size=1` → `total` |
+| 5 | 观察期命中 | `verdict='allow' AND action='audit'` 的审计行数 | `GET /api/audits?action=audit&page_size=1` → `total`（§3.2 新增参数） |
+| 6 | 拦截率 | 卡4 ÷ 卡3，前端本地计算；分母=全部 Skill 调用（非 trace 数） | 无端点 |
+| 7 | Top 命中规则 | hits 最多的规则；并列取 rule_id 升序首个 | `GET /api/audits/stats/by-rule?limit=1` → `items[0]`（§3.3） |
+| 8 | 启用中规则 | `enabled=true` 的规则数 | `GET /api/rules`（不分页）→ 客户端 count |
+
+统计范围 = DB 全量；「近 7 天」时间窗参数（`from`/`to` 各端点已支持）留给 M3 打磨阶段按演示体量决定是否上卡片。
+
+### 3.5 `GET /api/rules`（引用）
+
+规则列表端点形状见 §4；统计卡 8 直接消费其 `items`（不分页，规则量小）。
 - **统计端点不在本契约**（口径挂 #2 原型确认，地图 fog）。
 
 ## 4. 管理 API（规则 CRUD）
@@ -222,5 +272,5 @@ CREATE INDEX idx_audit_rule    ON audit (rule_id);
 
 ## 6. 非目标（本票不覆盖）
 
-- 统计端点与统计卡片口径 → #2；演示种子规则的具体内容与场景绑定 → #9；M1 切片范围 → #10。
+- ~~统计端点与统计卡片口径 → #2~~（已定案，见 §3.3/§3.4）；演示种子规则的具体内容与场景绑定 → #9；M1 切片范围 → #10。
 - 输出侧检测、频率/配额、跨调用关联 → 引擎能力边界之外（§1.5）；ML/LLM 智能检测 → 地图 Out of scope。
