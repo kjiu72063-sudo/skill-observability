@@ -43,3 +43,28 @@ export async function apiGet<T = LosslessParsed>(path: string, signal?: AbortSig
   if (!resp.ok) throw new ApiError(resp.status, extractDetail(text));
   return parseLossless(text) as T;
 }
+
+/* ---- M2-03（#18）徽标取数：?page_size=1 取 total，少拉一行数据 ---- */
+
+/** 分页响应公共形状（trace 契约 §2.1 / audit 契约 §3.2 同形）：本票只消费 total。 */
+interface PagedTotal {
+  total: number;
+}
+
+async function fetchTotal(path: string): Promise<number> {
+  const body = await apiGet<PagedTotal>(`${path}?page_size=1`);
+  if (typeof body.total !== "number") {
+    throw new ApiError(200, `total 缺失或非数字（${path}?page_size=1）`);
+  }
+  return body.total;
+}
+
+/** Trace 徽标：`GET /api/traces?page_size=1` 的 total（DB 全量口径）。 */
+export function fetchTraceTotal(): Promise<number> {
+  return fetchTotal("/traces");
+}
+
+/** 审计徽标：`GET /api/audits?page_size=1` 的 total（全量口径，不带筛选——筛选口径归 M2-12 统计卡）。 */
+export function fetchAuditTotal(): Promise<number> {
+  return fetchTotal("/audits");
+}

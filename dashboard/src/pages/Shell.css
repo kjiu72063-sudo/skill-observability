@@ -1,42 +1,206 @@
 /*
- * 壳页样式（M2-02 #17）：仅空布局骨架（暗底全屏 + 居中标题占位）。
- * 区块布局（侧栏/分栏/表格）归 M2-03 及以后，本票不写。
+ * 壳页样式（M2-03 #18）：SIGIL 令牌首次真实上壳——布局对齐 #2 原型
+ * （prototype/kanban-infoarch 分支 kanban-infoarch-wireframe.html 46–92 行）。
+ * 只消费 tokens.css 变量，不新增颜色/间距裸值（票面纪律）。
  */
 
-.shell {
-  min-height: 100vh;
+/* ---- 顶栏（原型 .topbar）---- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
-  flex-direction: column;
-}
-
-.shell-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 16px;
+  padding: 0 clamp(16px, 3vw, 28px);
+  height: 58px;
+  background: color-mix(in srgb, var(--bg0) 72%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
   gap: 10px;
-  padding: 32px;
+  white-space: nowrap;
 }
 
-.shell-title {
-  margin: 0;
-  font: 600 clamp(24px, 3vw, 34px) / 1.2 var(--font-d);
-  letter-spacing: -0.01em;
-  background: var(--grad-head);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.brand .logo {
+  font: 700 17px/1 var(--font-d);
+  letter-spacing: 0.14em;
+  color: var(--ink);
 }
 
-.shell-title b {
+.brand .logo b {
   color: var(--cyan);
-  -webkit-text-fill-color: var(--cyan);
+  font-weight: 700;
 }
 
-.shell-sub {
-  margin: 0;
+.brand .sub {
   font: 11px var(--font-m);
   color: var(--ink3s);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+}
+
+.top-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 系统健康点：绿=系统健康非 verdict（CONTEXT.md 看板术语） */
+.sys {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 11px var(--font-m);
+  color: var(--ink3s);
+  letter-spacing: 0.05em;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  position: relative;
+  flex: none;
+}
+
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--green);
+  animation: dot-pulse 2.4s var(--ease) infinite;
+}
+
+@keyframes dot-pulse {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ---- 主体网格：侧栏 172px + 内容区（原型 .shell）---- */
+.shell {
+  display: grid;
+  grid-template-columns: 172px 1fr;
+  min-height: calc(100vh - 58px);
+}
+
+/* ---- 左侧边栏（原型 .rail）---- */
+.rail {
+  border-right: 1px solid var(--line);
+  padding: 22px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: color-mix(in srgb, var(--bg1) 50%, transparent);
+}
+
+.rail-cap {
+  font: 10px var(--font-m);
+  letter-spacing: 0.18em;
+  color: var(--ink4);
+  margin: 0 0 10px 10px;
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+.rail-btn {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  color: var(--ink2);
+  font-weight: 500;
+  font-size: 13.5px;
+  position: relative;
+  transition: all 0.3s var(--ease);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.rail-btn svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  transition: transform 0.3s var(--ease);
+}
+
+.rail-btn:hover {
+  color: var(--ink);
+  background: var(--bg2);
+}
+
+/* 选中态：青 accent 渐变底 + 左侧青条 + 图标点亮（原型 .rail button.active） */
+.rail-btn[aria-current="page"] {
+  color: var(--ink);
+  background: linear-gradient(90deg, var(--cyan-dim), transparent 130%);
+}
+
+.rail-btn[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--cyan);
+}
+
+.rail-btn[aria-current="page"] svg {
+  color: var(--cyan);
+  transform: scale(1.06);
+}
+
+/* 行数计数徽标（原型 .rail-num）：中性色——三信号色徽标首次使用在 M2-04/M2-07 */
+.rail-num {
+  margin-left: auto;
+  font: 10px var(--font-m);
+  color: var(--ink4);
+}
+
+/* ---- 内容区与占位页 ---- */
+.shell-main {
+  padding: clamp(18px, 3vw, 30px);
+  min-width: 0;
+  max-width: 1460px;
+  width: 100%;
+}
+
+.page {
+  padding: 24px;
+  border: 1px dashed var(--line2);
+  border-radius: var(--r-lg);
+}
+
+.page-title {
+  margin: 0 0 8px;
+  font: 600 22px/1.3 var(--font-d);
+  color: var(--ink);
+}
+
+.page-hint {
+  margin: 0;
+  font: 12px var(--font-m);
+  color: var(--ink3s);
+  letter-spacing: 0.04em;
 }

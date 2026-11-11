@@ -1,21 +1,41 @@
 /**
- * 壳页（M2-02 #17）：空布局 + 标题占位——布局挂载点，无导航无数据无任何业务 UI
- * （那是 M2-03 及以后的事）。四区块导航位、内容区均以注释占位，后续票往里填。
+ * 壳页（M2-03 #18）：HashRouter + 顶栏（品牌标题）+ 左侧边栏四项导航 + 路由出口。
+ *
+ * 布局对齐 #2 原型定案：topbar（58px）+ .shell 网格（172px 侧栏 + 内容区）。
+ * 顶栏右侧系统健康点（绿=系统健康，非 verdict——CONTEXT.md 看板术语）随本票上壳；
+ * 四区块内容 = <Outlet/>（M2-03 全是占位页）。
  */
+
+import { HashRouter } from "react-router-dom";
+
+import Sidebar from "../components/Sidebar";
+import AppRoutes from "./routes";
 
 export default function Shell() {
   return (
-    <div className="shell">
-      {/* M2-03：左侧边栏 4 项导航（Trace / 审计日志 / 规则管理 / 统计卡片）+ 行数计数徽标 */}
-      <main className="shell-main">
-        <header className="shell-head">
-          <h1 className="shell-title">
-            SIGIL<b>·</b>Agent Skill 合规可观测
-          </h1>
-          <p className="shell-sub">M2 看板 · 壳页（工程脚手架，无业务区块）</p>
+    <HashRouter>
+      <div className="app">
+        <header className="topbar">
+          <div className="brand">
+            <span className="logo">
+              SIG<b>IL</b>
+            </span>
+            <span className="sub">AGENT SKILL 合规可观测平台</span>
+          </div>
+          <div className="top-right">
+            <div className="sys">
+              <span className="dot" aria-hidden="true" />
+              <span>实时推送中</span>
+            </div>
+          </div>
         </header>
-        {/* M2-03 起在此挂四区块内容 */}
-      </main>
-    </div>
+        <div className="shell">
+          <Sidebar />
+          <main className="shell-main">
+            <AppRoutes />
+          </main>
+        </div>
+      </div>
+    </HashRouter>
   );
 }
