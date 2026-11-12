@@ -11,7 +11,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { HashRouter } from "react-router-dom";
 
 import TracePage, { isPageChangeAllowed } from "./Trace";
-import { pageWindow } from "../components/TracePager";
+import { pageWindow, totalPagesOf } from "../components/TracePager";
 
 /** 一条列表项的原始 JSON 片段：纳秒以数字字面量下发（模拟 FastAPI 序列化）。 */
 function wireItemJson(fields: {
@@ -161,11 +161,14 @@ describe("Trace 列表渲染（M2-04 #19）", () => {
     expect(badges).toHaveLength(10);
   });
 
-  it("总数超过一页才出现分页控件", async () => {
+  it("只有一页时仍显示分页控件（「共 1 条」可见——默认 demo 单条场景）", async () => {
     stubPagedApi({ 1: [wireItemJson({})] }, 1);
     renderPage();
     await screen.findByRole("button", { name: /invoke_agent/ });
-    expect(screen.queryByRole("navigation", { name: "Trace 列表分页" })).toBeNull();
+    const pager = screen.getByRole("navigation", { name: "Trace 列表分页" });
+    expect(pager).toHaveTextContent("共 1 条 · 第 1/1 页");
+    expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
   });
 });
 
@@ -375,6 +378,18 @@ describe("isPageChangeAllowed（翻页准入，越界/同页拒绝）", () => {
   it("同页拒绝（不重取、不清选中）", () => {
     expect(isPageChangeAllowed(1, 1, 3)).toBe(false);
     expect(isPageChangeAllowed(2, 2, 3)).toBe(false);
+  });
+});
+
+describe("totalPagesOf（总页数口径，列表页与分页控件共用）", () => {
+  it("向上取整", () => {
+    expect(totalPagesOf(21, 20)).toBe(2);
+    expect(totalPagesOf(20, 20)).toBe(1);
+    expect(totalPagesOf(41, 20)).toBe(3);
+  });
+
+  it("至少 1 页（total=0 不出现 0 页）", () => {
+    expect(totalPagesOf(0, 20)).toBe(1);
   });
 });
 

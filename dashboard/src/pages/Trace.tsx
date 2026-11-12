@@ -22,7 +22,7 @@ import {
   type TraceListItem,
 } from "../api/traces";
 import { ApiError } from "../api/client";
-import TracePager from "../components/TracePager";
+import TracePager, { totalPagesOf } from "../components/TracePager";
 import TraceRow, { TraceListEmpty } from "../components/TraceRow";
 import "./Trace.css";
 
@@ -55,7 +55,7 @@ export default function TracePage() {
     fetchTraces(page, TRACE_PAGE_SIZE, ctrl.signal)
       .then((body) => {
         if (!alive) return;
-        const totalPages = Math.max(1, Math.ceil(body.total / body.page_size));
+        const totalPages = totalPagesOf(body.total, body.page_size);
         if (body.page > totalPages) {
           // DB 重置/总数缩水：请求页已越界，回落到最后一页（不渲染「第 3/2 页」）
           setPage(totalPages);
@@ -87,8 +87,7 @@ export default function TracePage() {
   }, [page, reloadTick]);
 
   const handlePageChange = (next: number) => {
-    const totalPages =
-      state.kind === "ready" ? Math.max(1, Math.ceil(state.total / state.pageSize)) : 1;
+    const totalPages = state.kind === "ready" ? totalPagesOf(state.total, state.pageSize) : 1;
     if (!isPageChangeAllowed(next, page, totalPages)) return;
     // 翻页清空选中：跨页残留的选中行会让右栏与列表不同页，语义错乱（详情联动归 #20）
     setSelectedId(null);
@@ -102,7 +101,7 @@ export default function TracePage() {
   };
 
   return (
-    <section className="view">
+    <section>
       <div className="view-head">
         <div>
           <h2 className="page-title">Trace</h2>
@@ -119,7 +118,8 @@ export default function TracePage() {
         <div className="card trace-list-card">
           <div className="rail-cap trace-list-cap">TRACE 列表</div>
           <TraceListBody state={state} selectedId={selectedId} onSelect={setSelectedId} onRetry={retry} />
-          {state.kind === "ready" && state.total > state.pageSize ? (
+          {/* 一页也显示：默认 demo 只有 1 条 trace，隐藏会让「共 1 条」不可见（票面要求分页控件在场） */}
+          {state.kind === "ready" && state.total > 0 ? (
             <TracePager
               page={state.page}
               pageSize={state.pageSize}
@@ -193,9 +193,7 @@ function SelectedPlaceholder({ selectedId, state }: { selectedId: string | null;
     state.kind === "ready" ? state.items.find((i) => i.trace_id === selectedId)?.name : undefined;
   return (
     <div className="detail-placeholder">
-      <div className="rail-cap" style={{ margin: 0 }}>
-        SPAN 树
-      </div>
+      <div className="rail-cap detail-cap">SPAN 树</div>
       <div className="detail-selected">
         <span className="detail-selected-id">{selectedId}</span>
         {name ? <span className="detail-selected-name">{name}</span> : null}

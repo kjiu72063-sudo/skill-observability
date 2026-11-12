@@ -13,6 +13,11 @@ interface PagerProps {
   onPageChange: (page: number) => void;
 }
 
+/** 总页数（向上取整，至少 1 页）——列表页与分页控件共用一个口径。 */
+export function totalPagesOf(total: number, pageSize: number): number {
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
 /** 页码窗口：当前页居中，最多 5 个，两端收敛到合法范围。 */
 export function pageWindow(page: number, totalPages: number): number[] {
   if (totalPages <= 0) return [];
@@ -23,7 +28,7 @@ export function pageWindow(page: number, totalPages: number): number[] {
 }
 
 export default function TracePager({ page, pageSize, total, onPageChange }: PagerProps) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const totalPages = totalPagesOf(total, pageSize);
   const windowPages = pageWindow(page, totalPages);
 
   return (

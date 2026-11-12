@@ -366,6 +366,10 @@
   gap: 14px;
 }
 
+.detail-cap {
+  margin: 0;
+}
+
 .detail-selected {
   display: flex;
   align-items: baseline;
