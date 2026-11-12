@@ -266,12 +266,19 @@ describe("spanPolicy（attributes 完整键直读，不解析嵌套）", () => {
     expect(view.reason).toBeNull();
   });
 
-  it("已结束且未命中规则的 execute_tool → 灰放行", () => {
+  it("已结束且未命中规则的 execute_tool → 灰放行（标记为推断，非 attributes 直读）", () => {
     expect(spanPolicy(demoSpans()[2])).toEqual({
       signal: "allow",
       matchedRule: null,
       reason: null,
+      inferred: true,
     });
+  });
+
+  it("block / observe 是 attributes 直读，inferred 恒为 false", () => {
+    // 契约 §3.4：block 必写 verdict、观察期命中必写 verdict+matched_rule——有据可依
+    expect(spanPolicy(demoSpans()[6]).inferred).toBe(false);
+    expect(spanPolicy(demoSpans()[4]).inferred).toBe(false);
   });
 
   it("root/chat span 不贴放行徽标（只有 Skill 调用有 verdict 语义）", () => {

@@ -126,11 +126,14 @@ describe("Trace 详情树（M2-05 #20）", () => {
     expect(badge).toHaveAttribute("data-tone", "observe");
   });
 
-  it("未命中规则的 execute_tool → 灰「放行」；root/chat 无 verdict 徽标", async () => {
+  it("未命中规则的 execute_tool → 灰「放行」（带推断说明）；root/chat 无 verdict 徽标", async () => {
     stubDetail(DEMO_SPANS_JSON);
     renderPanel();
     const allowed = await screen.findByRole("button", { name: /^span execute_tool query_user_db/ });
-    expect(within(allowed).getByText("放行")).toHaveAttribute("data-tone", "allow");
+    const badge = within(allowed).getByText("放行");
+    // 灰放行不是 attributes 直读（契约 §3.4：未命中规则不写 verdict）——title 必须点明推断
+    expect(badge).toHaveClass("b-allow");
+    expect(badge.getAttribute("title")).toContain("推断");
 
     const root = screen.getByRole("button", { name: /^span invoke_agent/ });
     expect(within(root).queryByText("放行")).toBeNull();

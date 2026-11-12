@@ -55,9 +55,17 @@ function SpanNodeRow({
         {errored ? <Badge tone="block">ERROR</Badge> : null}
         {policy.signal === "block" ? <Badge tone="block">拦截</Badge> : null}
         {policy.signal === "observe" ? <Badge tone="observe">观察期</Badge> : null}
-        {policy.signal === "allow" ? <Badge tone="allow">放行</Badge> : null}
+        {policy.signal === "allow" ? (
+          <span
+            className="b b-allow"
+            title="推断：未命中规则的成功调用不写 verdict（契约 §3.4），放行由「已结束且无拦截证据」得出"
+          >
+            放行
+          </span>
+        ) : null}
         {/* 孤儿是数据完整性问题、不是 verdict——用中性徽标，避免占用三信号色语义 */}
-        {node.orphan ? <span className="b b-neutral">孤儿</span> : null}      </button>
+        {node.orphan ? <span className="b b-neutral">孤儿</span> : null}
+      </button>
       {node.children.length > 0 ? (
         <ul>
           {node.children.map((child) => (

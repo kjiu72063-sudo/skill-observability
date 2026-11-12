@@ -176,6 +176,12 @@ export interface SpanPolicyView {
   matchedRule: string | null;
   /** 拦截理由（attributes 的 block_reason，缺省回退 status_message） */
   reason: string | null;
+  /**
+   * 灰「放行」是**推断**而非 attributes 直读：契约 §3.4 规定未命中规则的成功调用
+   * 不写 verdict，所以「已结束 + 非 ERROR + 是 Skill 调用」被当作放行。真实依据只有
+   * 「没有拦截证据」——审计行的权威 verdict 在审计表，不在 span 上（#20 决议留痕）。
+   */
+  inferred: boolean;
 }
 
 function isExecuteToolSpan(span: TraceSpan): boolean {
@@ -188,7 +194,8 @@ function isExecuteToolSpan(span: TraceSpan): boolean {
  * 从 attributes 的 `skill_observability.*` 完整键读命中信号（不解析嵌套）：
  * - block 必写 verdict/block_reason；error.type=policy.block 作为兜底同判拦截；
  * - 观察期命中：verdict=allow + matched_rule（契约 §3.4 写入时机）；
- * - 其余已结束的成功 Skill 调用 = 放行（灰）；root/chat span 与异常 span 不贴放行。
+ * - 其余已结束的成功 Skill 调用 = 放行（灰，`inferred: true`——见 SpanPolicyView 注）；
+ *   root/chat span 与异常 span 不贴放行。
  */
 export function spanPolicy(span: TraceSpan): SpanPolicyView {
   const attrs = span.attributes ?? {};
@@ -204,11 +211,12 @@ export function spanPolicy(span: TraceSpan): SpanPolicyView {
         typeof blockReason === "string" && blockReason !== ""
           ? blockReason
           : (span.status_message ?? null),
+      inferred: false,
     };
   }
 
   if (verdict === "allow" && typeof matched === "string" && matched !== "") {
-    return { signal: "observe", matchedRule: matched, reason: null };
+    return { signal: "observe", matchedRule: matched, reason: null, inferred: false };
   }
 
   if (
@@ -216,8 +224,8 @@ export function spanPolicy(span: TraceSpan): SpanPolicyView {
     span.status_code !== "ERROR" &&
     span.end_time_unix_nano !== null
   ) {
-    return { signal: "allow", matchedRule: null, reason: null };
+    return { signal: "allow", matchedRule: null, reason: null, inferred: true };
   }
 
-  return { signal: null, matchedRule: null, reason: null };
+  return { signal: null, matchedRule: null, reason: null, inferred: false };
 }

@@ -81,7 +81,14 @@ export default function SpanDetailCard({ span }: { span: TraceSpan }) {
           {errored ? <Badge tone="block">ERROR</Badge> : null}
           {policy.signal === "block" ? <Badge tone="block">拦截</Badge> : null}
           {policy.signal === "observe" ? <Badge tone="observe">观察期</Badge> : null}
-          {policy.signal === "allow" ? <Badge tone="allow">放行</Badge> : null}
+          {policy.signal === "allow" ? (
+            <span
+              className="b b-allow"
+              title="推断：未命中规则的成功调用不写 verdict（契约 §3.4），放行由「已结束且无拦截证据」得出"
+            >
+              放行
+            </span>
+          ) : null}
         </div>
       </div>
 
