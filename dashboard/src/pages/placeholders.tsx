@@ -1,8 +1,8 @@
 /**
- * 四路由占位页（M2-03 #18）：区块名 + 一行建设说明——内容归后续票，本票不写业务组件。
+ * 三路由占位页（M2-03 #18；M2-04 #19 起 Trace 换真页，本文件只余三页）。
  *
- * 页号映射：Trace 列表/树 = M2-04/M2-05（#19/#20）、审计 = M2-07/M2-08（#22/#23）、
- * 规则 = M2-09/M2-10（#24/#25）、统计 = M2-11/M2-12（#26/#27）。
+ * 页号映射：审计 = M2-07/M2-08（#22/#23）、规则 = M2-09/M2-10（#24/#25）、
+ * 统计 = M2-11/M2-12（#26/#27）。Trace 已由 ./Trace.tsx 接管（列表+详情分栏）。
  */
 
 interface PlaceholderProps {
@@ -17,10 +17,6 @@ export function PlaceholderPage({ title, ticket }: PlaceholderProps) {
       <p className="page-hint">{ticket} 建设中——本票（M2-03）只立骨架，内容归后续票。</p>
     </section>
   );
-}
-
-export function TracePage() {
-  return <PlaceholderPage title="Trace" ticket="M2-04/M2-05" />;
 }
 
 export function AuditPage() {

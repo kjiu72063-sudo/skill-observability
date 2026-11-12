@@ -1,0 +1,399 @@
+/*
+ * Trace 区块样式（M2-04 #19）：对齐 #2 原型（prototype/kanban-infoarch 分支
+ * kanban-infoarch-wireframe.html 100–140 行）——左右分栏、列表行、徽标族、空态。
+ * 只消费 tokens.css 变量，不新增颜色裸值。
+ */
+
+/* ---- 区块头（原型 .view-head）---- */
+.view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.view-desc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--ink3s);
+  margin-top: 6px;
+}
+
+.ep-chip {
+  font: 10.5px var(--font-m);
+  color: var(--ink3s);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.ep-chip i {
+  color: var(--cyan);
+  font-style: normal;
+}
+
+/* ---- 左右分栏（原型 .trace-split）---- */
+.trace-split {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .trace-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg3) 86%, transparent), color-mix(in srgb, var(--bg2) 86%, transparent));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 18px;
+  transition: border-color 0.3s var(--ease);
+}
+
+.card:hover {
+  border-color: var(--line2);
+}
+
+.trace-list-card {
+  padding: 14px;
+}
+
+.trace-list-cap {
+  margin: 0 0 10px 4px;
+}
+
+/* ---- 列表（原型 .tlist）---- */
+.tlist {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* .tlist 是限高 flex 列容器：不给行设 flex:none 会被压扁（20 行挤进 420px，
+ * 每行 ~25px，overflow:hidden 把 meta 行整段裁掉——2026-11-12 QA 实录）。 */
+.tlist > .trow {
+  flex: none;
+}
+
+@media (max-width: 1080px) {
+  .tlist {
+    max-height: 320px;
+  }
+}
+
+/* ---- 列表行（原型 .trow）---- */
+.trow {
+  position: relative;
+  text-align: left;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  transition: all 0.3s var(--ease);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.trow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.3s;
+}
+
+.trow:hover {
+  border-color: var(--line2);
+  transform: translateX(2px);
+}
+
+/* 选中态（#2 定案：本票只做选中样式，详情联动归 #20） */
+.trow.selected {
+  background: linear-gradient(90deg, var(--cyan-dim), var(--bg2) 70%);
+  border-color: var(--cyan-glow);
+}
+
+.trow.selected::before {
+  background: var(--cyan);
+}
+
+.trow:focus-visible {
+  outline: 2px solid var(--cyan-glow);
+  outline-offset: 2px;
+}
+
+.trow-name {
+  font: 600 12.5px var(--font-m);
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.trow.selected .trow-name {
+  color: var(--cyan);
+}
+
+.trow-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ink3s);
+  flex-wrap: wrap;
+}
+
+/* agent_id 徽标列（#2 M4：审计行恢复该维度，列表先立榜样） */
+.agent-chip {
+  font: 10.5px var(--font-m);
+  color: var(--ink2);
+  background: var(--bg3);
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  padding: 2px 6px;
+  letter-spacing: 0.02em;
+}
+
+.trow-time {
+  font: 11px var(--font-m);
+  color: var(--ink3s);
+  white-space: nowrap;
+}
+
+.spans-n {
+  margin-left: auto;
+  font: 11px var(--font-m);
+  color: var(--ink4);
+  white-space: nowrap;
+}
+
+/* 选中底条（原型 .trow .bar） */
+.trow-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--cyan);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 0.35s var(--ease);
+}
+
+.trow.selected .trow-bar {
+  transform: scaleX(1);
+}
+
+/* ---- 徽标族（原型 .b 系列；三信号色语义见 CONTEXT.md 看板术语）---- */
+.b {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 600 10px/1 var(--font-m);
+  letter-spacing: 0.07em;
+  padding: 4px 8px;
+  border-radius: 99px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.b-block {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: var(--red-line);
+}
+
+.b-observe {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-color: var(--amber-line);
+}
+
+.b-allow {
+  color: var(--ink3s);
+  background: var(--bg3);
+  border-color: var(--line2);
+}
+
+/* 进行中：青（原型 .b-run）——不用琥珀：琥珀在 CONTEXT.md 专指观察期命中 */
+.b-run {
+  color: var(--cyan);
+  background: var(--cyan-dim);
+  border-color: var(--cyan-glow);
+}
+
+/* 呼吸态：进行中是「活的」状态，用透明度呼吸而非缩放（不扰动行高） */
+.b-pulse {
+  animation: badge-breath 1.8s ease-in-out infinite;
+}
+
+@keyframes badge-breath {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* 减弱动效偏好：呼吸停下，保留静态徽标（状态仍可读） */
+@media (prefers-reduced-motion: reduce) {
+  .b-pulse {
+    animation: none;
+  }
+}
+
+.retry-btn {
+  margin-top: 10px;
+}
+
+/* ---- 加载/错误/空态（原型 .empty）---- */
+.tlist-state {
+  padding: 22px 12px;
+  font-size: 12.5px;
+  color: var(--ink3s);
+  text-align: center;
+}
+
+.tlist-error {
+  color: var(--red);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 44px 20px;
+  color: var(--ink4);
+  text-align: center;
+  border: 1px dashed var(--line2);
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+}
+
+.empty svg {
+  width: 30px;
+  height: 30px;
+  opacity: 0.5;
+}
+
+.empty-title {
+  font-weight: 600;
+  color: var(--ink3s);
+}
+
+/* ---- 分页 ---- */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pager-btn,
+.pager-num {
+  font: 11px var(--font-m);
+  color: var(--ink2);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 5px 9px;
+  cursor: pointer;
+  transition: all 0.25s var(--ease);
+}
+
+.pager-btn:hover:not(:disabled),
+.pager-num:hover {
+  border-color: var(--line2);
+  color: var(--ink);
+}
+
+.pager-btn:disabled {
+  color: var(--ink4);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.pager-num.on {
+  color: var(--cyan);
+  border-color: var(--cyan-glow);
+  background: var(--cyan-dim);
+}
+
+.pager-total {
+  margin-left: auto;
+  font: 10.5px var(--font-m);
+  color: var(--ink4);
+  white-space: nowrap;
+}
+
+/* ---- 右栏详情占位（M2-05 接管）---- */
+.trace-detail-card {
+  min-height: 320px;
+}
+
+.detail-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detail-selected {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg2);
+}
+
+.detail-selected-id {
+  font: 600 12px var(--font-m);
+  color: var(--cyan);
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.detail-selected-name {
+  font-size: 12px;
+  color: var(--ink3s);
+}
+
+.detail-hint {
+  padding: 44px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--ink4);
+  border: 1px dashed var(--line2);
+  border-radius: var(--r-md);
+}

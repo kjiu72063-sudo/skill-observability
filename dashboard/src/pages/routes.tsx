@@ -9,7 +9,8 @@
 
 import { Navigate, Route, Routes } from "react-router-dom";
 
-import { AuditPage, RulesPage, StatsPage, TracePage } from "./placeholders";
+import TracePage from "./Trace";
+import { AuditPage, RulesPage, StatsPage } from "./placeholders";
 
 export default function AppRoutes() {
   return (
