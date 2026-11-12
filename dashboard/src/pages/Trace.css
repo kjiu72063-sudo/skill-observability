@@ -245,11 +245,13 @@
   border-color: var(--cyan-glow);
 }
 
-/* 中性徽标：数据完整性问题（如「孤儿」）不占三信号色语义 */
+/* 中性徽标：数据完整性问题（如「孤儿」）不占三信号色语义。
+ * 与 .b-allow 显式区分（评审 #20 第一拍 P3：两者原本逐字相同、同色同形，只能靠文字分辨）：
+ * 孤儿是告警性质，取弱化琥珀底 + 中性字色，与灰「放行」一眼可分。 */
 .b-neutral {
-  color: var(--ink3s);
-  background: var(--bg3);
-  border-color: var(--line2);
+  color: var(--ink2);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+  border-color: color-mix(in srgb, var(--amber-line) 70%, var(--line2));
 }
 
 /* 呼吸态：进行中是「活的」状态，用透明度呼吸而非缩放（不扰动行高） */

@@ -57,8 +57,7 @@ function SpanNodeRow({
         {policy.signal === "observe" ? <Badge tone="observe">观察期</Badge> : null}
         {policy.signal === "allow" ? <Badge tone="allow">放行</Badge> : null}
         {/* 孤儿是数据完整性问题、不是 verdict——用中性徽标，避免占用三信号色语义 */}
-        {node.orphan ? <span className="b b-neutral">孤儿</span> : null}
-      </button>
+        {node.orphan ? <span className="b b-neutral">孤儿</span> : null}      </button>
       {node.children.length > 0 ? (
         <ul>
           {node.children.map((child) => (
@@ -78,22 +77,39 @@ function SpanNodeRow({
 
 export default function SpanTree({
   roots,
-  orphanCount,
+  missingParentCount,
+  cycleCount,
   selectedId,
   onSelectSpan,
 }: {
   roots: SpanNode[];
-  orphanCount: number;
+  missingParentCount: number;
+  cycleCount: number;
   selectedId: string | null;
   onSelectSpan: (spanId: string) => void;
 }) {
   // 空森林不在这里出空态文案：详情面板统一给「本 trace 暂无 span」空态（避免双份文案）
   if (roots.length === 0) return null;
+  // 两类异常分开说：父缺失是「父不在本 trace 内」，环是「父在但父子成环」——
+  // 合成一句会把后者说错（评审 #20 第一拍 P3）。
+  const warnings: string[] = [];
+  if (missingParentCount > 0) {
+    warnings.push(
+      `${missingParentCount} 个 span 找不到父节点（parent_span_id 不在本 trace 内），已并列挂在根层——数据可能不完整。`
+    );
+  }
+  if (cycleCount > 0) {
+    warnings.push(
+      `${cycleCount} 个 span 的父子关系成环（parent_span_id 互相指向），已切断环边并列挂在根层——数据异常，请检查上报端。`
+    );
+  }
   return (
     <div className="tree">
-      {orphanCount > 0 ? (
+      {warnings.length > 0 ? (
         <div className="tree-warn" role="alert">
-          {orphanCount} 个 span 找不到父节点（parent_span_id 不在本 trace 内），已并列挂在根层——数据可能不完整。
+          {warnings.map((w) => (
+            <div key={w}>{w}</div>
+          ))}
         </div>
       ) : null}
       <ul>

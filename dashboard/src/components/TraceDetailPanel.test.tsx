@@ -170,6 +170,32 @@ describe("Trace 详情树（M2-05 #20）", () => {
     expect(within(lost).getByText("孤儿")).toBeInTheDocument();
   });
 
+  it("环成员（A↔B）告警文案说「成环」而非「父不在本 trace 内」（评审第一拍 P3）", async () => {
+    // 两个 span 的父明明都在平铺集里，只是互相指向——用「找不到父节点」解释是错的
+    const cyclic = `
+{"trace_id":"tid","span_id":"a","parent_span_id":"b","name":"execute_tool span_a",
+ "kind":"INTERNAL","start_time_unix_nano":1794473008218267400,"end_time_unix_nano":1794473008370309100,
+ "status_code":"UNSET","status_message":null,"attributes":{},"events":[],"agent_id":null},
+{"trace_id":"tid","span_id":"b","parent_span_id":"a","name":"execute_tool span_b",
+ "kind":"INTERNAL","start_time_unix_nano":1794473008313710100,"end_time_unix_nano":1794473008320084800,
+ "status_code":"UNSET","status_message":null,"attributes":{},"events":[],"agent_id":null}`;
+    stubDetail(cyclic);
+    renderPanel();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/成环/);
+    expect(alert).not.toHaveTextContent(/找不到父节点/);
+    // 两个节点都还在（没丢），都在根层
+    expect(screen.getByRole("button", { name: /^span execute_tool span_a/ })).toHaveAttribute(
+      "data-depth",
+      "0"
+    );
+    expect(screen.getByRole("button", { name: /^span execute_tool span_b/ })).toHaveAttribute(
+      "data-depth",
+      "0"
+    );
+  });
+
   it("切换 trace_id → 重新取详情、树随之切换、span 选中被清空", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       const isSecond = url.includes("second");

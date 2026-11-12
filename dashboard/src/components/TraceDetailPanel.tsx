@@ -16,8 +16,40 @@ import { fetchTraceDetail, type TraceDetail, type TraceListItem } from "../api/t
 import SpanDetailCard from "./SpanDetailCard";
 import SpanTree from "./SpanTree";
 import { TraceListEmpty } from "./TraceRow";
-import { copyText } from "../lib/clipboard";
 import { buildSpanTree } from "../lib/spanTree";
+
+/**
+ * 复制文本（M3）：`navigator.clipboard` 优先（127.0.0.1 属安全上下文），
+ * 非安全上下文/权限拒绝时回退 textarea + execCommand。返回是否成功——
+ * 展示层据此给「已复制 / 复制失败」，绝不假装成功。
+ * 回退分支用 try/finally：execCommand 抛异常也不能把隐藏 textarea 留在 DOM 里。
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 权限拒绝/浏览器策略：走回退
+  }
+
+  const area = document.createElement("textarea");
+  try {
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+  }
+}
 
 type DetailState =
   | { kind: "loading" }
@@ -137,7 +169,8 @@ export default function TraceDetailPanel({
       {tree ? (
         <SpanTree
           roots={tree.roots}
-          orphanCount={tree.orphanCount}
+          missingParentCount={tree.missingParentCount}
+          cycleCount={tree.cycleCount}
           selectedId={selectedSpanId}
           onSelectSpan={setSelectedSpanId}
         />

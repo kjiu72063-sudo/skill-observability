@@ -18,13 +18,16 @@ import type { TraceSpan } from "../api/traces";
 export interface SpanNode {
   span: TraceSpan;
   children: SpanNode[];
-  /** 父 span 不在本 trace 的平铺集里：已并列挂到根层，未丢弃 */
+  /** 无法按 parent_span_id 挂进树：父缺失 / 自指 / 环成员。已并列挂到根层，未丢弃 */
   orphan: boolean;
 }
 
 export interface SpanTreeView {
   roots: SpanNode[];
-  orphanCount: number;
+  /** 父 span 不在本 trace 的平铺集里（父缺失） */
+  missingParentCount: number;
+  /** 父链成环（含自指、A↔B）而被切断升根的节点数 */
+  cycleCount: number;
 }
 
 /** 同层按 start 升序（契约 §2.2 的 ORDER BY 在前端兜底；BigInt 精确比较）。 */
@@ -92,6 +95,9 @@ export function buildSpanTree(spans: readonly TraceSpan[]): SpanTreeView {
 
   const cyclic = findCycleMembers(nodes);
   const roots: SpanNode[] = [];
+  let missingParentCount = 0;
+  let cycleCount = 0;
+
   for (const node of nodes.values()) {
     const parentId = node.span.parent_span_id;
     if (parentId === null) {
@@ -99,26 +105,34 @@ export function buildSpanTree(spans: readonly TraceSpan[]): SpanTreeView {
       continue;
     }
     const parent = nodes.get(parentId);
+    const isCycle = cyclic.has(node.span.span_id);
     // 环成员一律升根：挂在环里会互挂成环（渲染无限递归），升根是可渲染的最小补救。
     // 环外节点即使父在环里也照常挂载——父已升根，子树无环。
-    if (parent !== undefined && parent !== node && !cyclic.has(node.span.span_id)) {
+    if (parent !== undefined && parent !== node && !isCycle) {
       parent.children.push(node);
       continue;
     }
     node.orphan = true;
+    if (isCycle) cycleCount++;
+    else missingParentCount++;
     roots.push(node);
   }
 
   sortDeep(roots);
-  return { roots, orphanCount: roots.filter((n) => n.orphan).length };
+  return { roots, missingParentCount, cycleCount };
 }
 
 const NS_PER_TENTH_MS = 100_000n;
 const NS_PER_HALF_TENTH_MS = 50_000n;
 
 /**
- * end - start（纳秒）→ 毫秒数，保留 0.1ms（四舍五入，与 `python demo.py` 终端打印
- * 的 `{ms:.1f}` 口径一致——截断会让同一 span 出现 184.0 / 184.1 两种读数）。
+ * end - start（纳秒）→ 毫秒数，保留 0.1ms。
+ *
+ * 进位方式与 `python demo.py` 的 `f"{ms:.1f}"` 在实测 demo 数据上逐字一致，
+ * 但**不是**逐位等价：Python 走 IEEE-754 二进制半偶舍入，本实现是十进制定点
+ * 四舍五入，只有恰好落在 0.05ms 中点的值才会差一档（如 12.35ms → 本实现 12.4、
+ * Python 12.3，概率约 1e-5）。为保证「同一 span 两处读数一致」这一演示诉求，
+ * 取十进制定点；中点边界不在演示数据里出现，未做二进制模拟。
  * 进行中（end 为 null）/ 非法 / 负时长 → null（展示层给出对应文案）。
  */
 export function spanDurationMs(span: Pick<TraceSpan, "start_time_unix_nano" | "end_time_unix_nano">): number | null {

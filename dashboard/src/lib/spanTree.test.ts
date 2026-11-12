@@ -105,10 +105,11 @@ function demoSpans(): TraceSpan[] {
 
 describe("buildSpanTree（契约 §2.2：前端按 parent_span_id 组装）", () => {
   it("demo 形状 → 1 root + 3 chat + 3 execute_tool，三层挂接正确", () => {
-    const { roots, orphanCount } = buildSpanTree(demoSpans());
+    const { roots, missingParentCount, cycleCount } = buildSpanTree(demoSpans());
 
     expect(roots).toHaveLength(1);
-    expect(orphanCount).toBe(0);
+    expect(missingParentCount).toBe(0);
+    expect(cycleCount).toBe(0);
     const root = roots[0];
     expect(root.span.span_id).toBe("root");
     expect(root.children.map((c) => c.span.span_id)).toEqual(["chat1", "chat2", "chat3"]);
@@ -129,38 +130,41 @@ describe("buildSpanTree（契约 §2.2：前端按 parent_span_id 组装）", ()
   });
 
   it("孤儿：父 span 不在本 trace → 挂根并列 + orphan 标记，不静默丢弃", () => {
-    const { roots, orphanCount } = buildSpanTree([
+    const { roots, missingParentCount, cycleCount } = buildSpanTree([
       span({ span_id: "root" }),
       span({ span_id: "lost", parent_span_id: "missing-parent" }),
     ]);
 
     expect(roots).toHaveLength(2);
-    expect(orphanCount).toBe(1);
+    expect(missingParentCount).toBe(1);
+    expect(cycleCount).toBe(0);
     const orphan = roots.find((n) => n.span.span_id === "lost");
     expect(orphan?.orphan).toBe(true);
     expect(roots.find((n) => n.span.span_id === "root")?.orphan).toBe(false);
   });
 
   it("自指 parent（脏数据）→ 按孤儿处理，不无限递归", () => {
-    const { roots, orphanCount } = buildSpanTree([
+    const { roots, missingParentCount, cycleCount } = buildSpanTree([
       span({ span_id: "self", parent_span_id: "self" }),
     ]);
     expect(roots).toHaveLength(1);
-    expect(orphanCount).toBe(1);
+    expect(cycleCount).toBe(1);
+    expect(missingParentCount).toBe(0);
     expect(roots[0].orphan).toBe(true);
     expect(roots[0].children).toHaveLength(0);
   });
 
   it("多节点环（A→B→A）→ 环成员全部升根并计数，不丢节点、不互挂", () => {
     // 只处理自指时这两个节点都挂不上根（parent 都在集合内、又不是 null），会被静默丢弃
-    const { roots, orphanCount } = buildSpanTree([
+    const { roots, cycleCount, missingParentCount } = buildSpanTree([
       span({ span_id: "a", parent_span_id: "b" }),
       span({ span_id: "b", parent_span_id: "a" }),
       span({ span_id: "leaf", parent_span_id: "a" }),
       span({ span_id: "ok", parent_span_id: null }),
     ]);
 
-    expect(orphanCount).toBe(2);
+    expect(cycleCount).toBe(2);
+    expect(missingParentCount).toBe(0);
     expect(roots.map((r) => r.span.span_id).sort()).toEqual(["a", "b", "ok"]);
     const a = roots.find((r) => r.span.span_id === "a")!;
     const b = roots.find((r) => r.span.span_id === "b")!;
@@ -170,17 +174,18 @@ describe("buildSpanTree（契约 §2.2：前端按 parent_span_id 组装）", ()
   });
 
   it("长链不误判为环（深度 3 链 + 正常挂接）", () => {
-    const { roots, orphanCount } = buildSpanTree([
+    const { roots, missingParentCount, cycleCount } = buildSpanTree([
       span({ span_id: "r", parent_span_id: null }),
       span({ span_id: "c", parent_span_id: "r" }),
       span({ span_id: "g", parent_span_id: "c" }),
     ]);
-    expect(orphanCount).toBe(0);
+    expect(missingParentCount).toBe(0);
+    expect(cycleCount).toBe(0);
     expect(roots[0].children[0].children[0].span.span_id).toBe("g");
   });
 
   it("空数组 → 空森林", () => {
-    expect(buildSpanTree([])).toEqual({ roots: [], orphanCount: 0 });
+    expect(buildSpanTree([])).toEqual({ roots: [], missingParentCount: 0, cycleCount: 0 });
   });
 });
 
@@ -195,15 +200,17 @@ describe("spanDurationMs / formatSpanDuration（end-start，0.1ms）", () => {
     ).toBe(152);
   });
 
-  it("保留一位小数（四舍五入到 0.1ms，与 demo 终端 {ms:.1f} 同口径）", () => {
-    // 12_399_999 ns = 12.399999 ms → 12.4（四舍五入；截断会得 12.3，与终端打印不一致）
+  it("保留一位小数（十进制定点四舍五入到 0.1ms）", () => {
+    // 12_399_999 ns = 12.399999 ms → 12.4（四舍五入；截断会得 12.3，与终端打印不一致）。
+    // 注意：与 Python f"{ms:.1f}" 仅在 0.05ms 中点边界上可能差一档（Python 走二进制
+    // 半偶舍入，12.35ms → 12.3）；演示数据不落中点，故取定点语义。
     expect(
       spanDurationMs({
         start_time_unix_nano: "1000000000000000000",
         end_time_unix_nano: "1000000000012399999",
       })
     ).toBe(12.4);
-    // 恰好半位进位：12.35 ms → 12.4
+    // 中点边界：12.35 ms → 12.4（十进制定点语义；Python 此处为 12.3，见上方注释）
     expect(
       spanDurationMs({
         start_time_unix_nano: "1000000000000000000",
