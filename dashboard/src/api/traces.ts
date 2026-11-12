@@ -38,6 +38,41 @@ export interface TraceListPage {
   total: number;
 }
 
+/**
+ * 契约 trace §2.2 详情里的 span 对象（表列原样，attributes/events 已解析）。
+ * 纳秒为字符串（losslessJson 基座）；end 为 null = 进行中。
+ */
+export interface TraceSpan {
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string | null;
+  name: string;
+  kind: string;
+  start_time_unix_nano: string;
+  end_time_unix_nano: string | null;
+  status_code: string;
+  status_message: string | null;
+  /** 键名含点（gen_ai.*、skill_observability.*）——按完整键字符串读，不解析嵌套 */
+  attributes: Record<string, unknown>;
+  /** 空数组 = 无事件（M5：不渲染 events 卡） */
+  events: SpanEvent[];
+  agent_id: string | null;
+}
+
+/** span 事件（OTel 形状：name + timestamp + attributes）。 */
+export interface SpanEvent {
+  name?: string;
+  timestamp?: string | number;
+  attributes?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** 契约 trace §2.2 详情响应：平铺数组，服务端不递归。 */
+export interface TraceDetail {
+  trace_id: string;
+  spans: TraceSpan[];
+}
+
 /** `GET /api/traces?page=&page_size=`：OFFSET 分页快照（SSE 实时插入归 M2-06）。 */
 export async function fetchTraces(
   page: number,
@@ -48,6 +83,21 @@ export async function fetchTraces(
   const body = await apiGet<TraceListPage>(`/traces?${query.toString()}`, signal);
   if (!Array.isArray(body.items) || typeof body.total !== "number") {
     throw new Error(`GET /api/traces 响应形状异常（缺 items/total，page=${page}）`);
+  }
+  return body;
+}
+
+/**
+ * `GET /api/traces/{trace_id}`：平铺 spans 数组（契约 §2.2），树形在前端建。
+ * 404 由调用方按 ApiError.status 区分文案（trace 不存在 ≠ 服务故障）。
+ */
+export async function fetchTraceDetail(
+  traceId: string,
+  signal?: AbortSignal
+): Promise<TraceDetail> {
+  const body = await apiGet<TraceDetail>(`/traces/${encodeURIComponent(traceId)}`, signal);
+  if (!Array.isArray(body.spans)) {
+    throw new Error(`GET /api/traces/${traceId} 响应形状异常（缺 spans）`);
   }
   return body;
 }

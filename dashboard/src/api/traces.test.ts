@@ -17,6 +17,7 @@ import {
   isInProgress,
   sortTraceItemsDesc,
   TRACE_PAGE_SIZE,
+  fetchTraceDetail,
   type TraceListItem,
 } from "./traces";
 
@@ -203,5 +204,68 @@ describe("isInProgress（契约语义：root end_time_unix_nano 为 null）", ()
 
   it("end 有值 → false（不回退到前端计时器）", () => {
     expect(isInProgress({ end_time_unix_nano: "1794389456024277000" })).toBe(false);
+  });
+});
+
+describe("fetchTraceDetail（契约 §2.2 详情：平铺 spans）", () => {
+  it("请求 GET /api/traces/{id} 并返回平铺数组（未递归）", async () => {
+    const fetchMock = mockOk({
+      trace_id: "t/1",
+      spans: [
+        { trace_id: "t/1", span_id: "a", parent_span_id: null, name: "invoke_agent x", kind: "INTERNAL", start_time_unix_nano: "1", end_time_unix_nano: null, status_code: "UNSET", status_message: null, attributes: {}, events: [], agent_id: null },
+        { trace_id: "t/1", span_id: "b", parent_span_id: "a", name: "chat x", kind: "CLIENT", start_time_unix_nano: "2", end_time_unix_nano: "3", status_code: "UNSET", status_message: null, attributes: {}, events: [], agent_id: null },
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = await fetchTraceDetail("t/1");
+
+    // trace_id 必须编码进 path（防注入/特殊字符）
+    expect(fetchMock).toHaveBeenCalledWith("/api/traces/t%2F1", { signal: undefined });
+    expect(body.spans).toHaveLength(2);
+    expect(body.spans[1].parent_span_id).toBe("a");
+  });
+
+  it("真实线路形状：纳秒数字字面量经 losslessJson 变字符串，不做递归分组", async () => {
+    const wire =
+      '{"trace_id":"t1","spans":[' +
+      '{"trace_id":"t1","span_id":"a","parent_span_id":null,"name":"invoke_agent",' +
+      '"kind":"INTERNAL","start_time_unix_nano":1794473008218267400,' +
+      '"end_time_unix_nano":1794473008370309100,"status_code":"UNSET","status_message":null,' +
+      '"attributes":{},"events":[],"agent_id":null}]}';
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(wire) })
+    );
+
+    const body = await fetchTraceDetail("t1");
+    const span = body.spans[0];
+
+    expect(typeof span.start_time_unix_nano).toBe("string");
+    expect(span.start_time_unix_nano).toBe("1794473008218267400");
+    expect(typeof span.end_time_unix_nano).toBe("string");
+    // 子节点没有被塞进父节点（平铺即契约）
+    expect(span).not.toHaveProperty("children");
+  });
+
+  it("响应缺 spans → 抛普通 Error（形状守卫，不是 HTTP 错误）", async () => {
+    vi.stubGlobal("fetch", mockOk({ trace_id: "t1" }));
+    await expect(fetchTraceDetail("t1")).rejects.toThrow(/响应形状异常/);
+  });
+
+  it("404 → ApiError（status=404），调用方据此区分「trace 不存在」", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve('{"detail":"trace not found"}'),
+      })
+    );
+    await expect(fetchTraceDetail("nope")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 404,
+      detail: "trace not found",
+    });
   });
 });

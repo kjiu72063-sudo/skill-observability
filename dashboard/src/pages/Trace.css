@@ -245,6 +245,13 @@
   border-color: var(--cyan-glow);
 }
 
+/* 中性徽标：数据完整性问题（如「孤儿」）不占三信号色语义 */
+.b-neutral {
+  color: var(--ink3s);
+  background: var(--bg3);
+  border-color: var(--line2);
+}
+
 /* 呼吸态：进行中是「活的」状态，用透明度呼吸而非缩放（不扰动行高） */
 .b-pulse {
   animation: badge-breath 1.8s ease-in-out infinite;
@@ -355,49 +362,490 @@
   white-space: nowrap;
 }
 
-/* ---- 右栏详情占位（M2-05 接管）---- */
+/* ---- 右栏详情（M2-05 #20）---- */
 .trace-detail-card {
   min-height: 320px;
 }
 
-.detail-placeholder {
+.trace-detail {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
-.detail-cap {
-  margin: 0;
-}
-
-.detail-selected {
+.detail-head-bar {
   display: flex;
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 12px 14px;
+}
+
+/* #19 复审 P3：.rail-cap 与 .detail-cap 特异性相同（各 0,1,0）、源序在后者——margins 被吃掉。
+ * 提高特异性到 0,2,0 显式归零，不赌打包器的 CSS 顺序。 */
+.rail-cap.detail-cap {
+  margin: 0;
+}
+
+.detail-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-count {
+  font: 10.5px var(--font-m);
+  color: var(--ink4);
+  white-space: nowrap;
+}
+
+.trace-tid-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--bg2);
 }
 
-.detail-selected-id {
+.trace-tid {
   font: 600 12px var(--font-m);
   color: var(--cyan);
   letter-spacing: 0.03em;
   overflow-wrap: anywhere;
+  user-select: all;
 }
 
-.detail-selected-name {
-  font-size: 12px;
+.trace-agent {
+  margin-left: auto;
+  font: 10.5px var(--font-m);
   color: var(--ink3s);
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  padding: 2px 6px;
 }
 
-.detail-hint {
-  padding: 44px 20px;
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--ink4);
+/* 按钮（原型 .btn）：复制按钮与后续区块复用 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  font: 600 11.5px var(--font-ui);
+  border: 1px solid var(--line2);
+  background: var(--bg3);
+  color: var(--ink2);
+  cursor: pointer;
+  transition: all 0.25s var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--ink4);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn-copy {
+  font-family: var(--font-m);
+  font-size: 10.5px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* ---- span 树（原型 .tnode，M2-05 #20）---- */
+.tree {
+  margin-top: 2px;
+}
+
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 22px;
+  position: relative;
+}
+
+.tree > ul {
+  padding-left: 0;
+}
+
+.tree ul::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: -4px;
+  bottom: 14px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--line2), transparent);
+}
+
+.tree > ul::before {
+  display: none;
+}
+
+.tnode-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  width: 100%;
+  max-width: 100%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: all 0.28s var(--ease);
+  overflow-wrap: anywhere;
+}
+
+.tnode-row::before {
+  content: "";
+  position: absolute;
+  left: -15px;
+  top: 50%;
+  width: 15px;
+  height: 1px;
+  background: var(--line2);
+}
+
+.tree > ul > .tnode > .tnode-row::before {
+  display: none;
+}
+
+.tnode-row:hover {
+  background: var(--bg2);
+  border-color: var(--line);
+}
+
+.tnode-row.selected {
+  background: var(--cyan-dim);
+  border-color: var(--cyan-glow);
+}
+
+.tnode-row.err {
+  background: var(--red-bg);
+  border-color: var(--red-line);
+}
+
+.tnode-row.err:hover {
+  background: color-mix(in srgb, var(--red) 22%, transparent);
+}
+
+.tnode-row.running {
   border: 1px dashed var(--line2);
-  border-radius: var(--r-md);
+  color: var(--ink3s);
+  background: var(--bg1);
+}
+
+.tnode-row:focus-visible {
+  outline: 2px solid var(--cyan-glow);
+  outline-offset: 2px;
+}
+
+.tnode-row .nm {
+  font: 500 12.5px var(--font-m);
+  overflow-wrap: anywhere;
+}
+
+.tnode-row .kd {
+  font: 9.5px var(--font-m);
+  color: var(--ink4);
+  border: 1px solid var(--line);
+  padding: 2px 5px;
+  border-radius: 5px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.tnode-row .dur {
+  font: 11px var(--font-m);
+  color: var(--ink3s);
+  min-width: 62px;
+  text-align: right;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.tnode-row.running .dur {
+  color: var(--cyan);
+  animation: dur-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes dur-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tnode-row.running .dur {
+    animation: none;
+  }
+}
+
+.running-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line2);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spinner-spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running-spinner {
+    animation: none;
+    border-top-color: var(--line2);
+    border-left-color: var(--cyan);
+  }
+}
+
+/* 孤儿告警：显式可见（票面：不许静默丢弃） */
+.tree-warn {
+  margin: 6px 0 8px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-sm);
+}
+
+
+/* ---- span 详情卡（原型 .span-detail / .attr-grid，M2-05 #20）---- */
+.span-detail {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detail-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.detail-sid {
+  font: 10.5px var(--font-m);
+  color: var(--ink3s);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 6px;
+  letter-spacing: 0.02em;
+}
+
+.detail-name {
+  font: 600 13px var(--font-m);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.detail-chips {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.detail-chips .kd {
+  font: 9.5px var(--font-m);
+  color: var(--ink4);
+  border: 1px solid var(--line);
+  padding: 2px 5px;
+  border-radius: 5px;
+  letter-spacing: 0.06em;
+}
+
+.detail-dur {
+  font: 11px var(--font-m);
+  color: var(--ink2);
+  white-space: nowrap;
+}
+
+.detail-dur.running {
+  color: var(--cyan);
+}
+
+.detail-status {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.detail-status .k,
+.detail-block-reason .k,
+.detail-observe-note .k {
+  font: 10.5px var(--font-m);
+  color: var(--ink4);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.detail-status .v {
+  font: 11.5px var(--font-m);
+  color: var(--ink2);
+  overflow-wrap: anywhere;
+}
+
+.detail-status .v.err {
+  color: var(--red);
+}
+
+.detail-block-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--red-line);
+  background: var(--red-bg);
+  border-radius: var(--r-sm);
+}
+
+.detail-block-reason .v {
+  font: 11.5px var(--font-m);
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
+
+.detail-observe-note {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--amber-line);
+  background: var(--amber-bg);
+  border-radius: var(--r-sm);
+}
+
+.detail-observe-note .v {
+  font: 11.5px var(--font-m);
+  color: var(--amber);
+  overflow-wrap: anywhere;
+}
+
+.detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-section-cap {
+  font: 10px var(--font-m);
+  letter-spacing: 0.16em;
+  color: var(--ink4);
+}
+
+.detail-none {
+  font-size: 12px;
+  color: var(--ink4);
+}
+
+/* 原型 .attr-grid：自适应两列；值用 overflow-wrap:anywhere（#2 M2 注意事项，不用 break-all）。
+ * flex-wrap 是必须的：`skill_observability.matched_rule` 这类长键（35 字符）会把值挤到
+ * 十几像素宽，r1b-pii-phone-audit 被拆成 4 行（2026-11-12 QA 实录）——允许换行后
+ * 长键独占一行、值在下一行完整展示。 */
+.attr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.attr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 8px 11px;
+  min-width: 0;
+}
+
+.attr .k {
+  font: 11px var(--font-m);
+  color: var(--cyan);
+  opacity: 0.85;
+  white-space: nowrap;
+  flex: none;
+}
+
+.attr .v {
+  font: 11.5px var(--font-m);
+  color: var(--ink2);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  /* 基准 150px：短键值仍占同一行，长键换行后值独占整行（不被压成竖条） */
+  flex: 1 1 150px;
+}
+
+/* events（M5：空数组不渲染卡，故本组只在有事件时出现） */
+.ev-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ev {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  background: var(--bg1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ev-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ev-name {
+  font: 600 11.5px var(--font-m);
+  color: var(--ink2);
+}
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
 }

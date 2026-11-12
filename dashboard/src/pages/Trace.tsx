@@ -1,9 +1,8 @@
 /**
- * Trace 区块（M2-04 #19）：左栏 REST 分页列表 + 右栏详情占位。
+ * Trace 区块（M2-04 #19 列表 + M2-05 #20 详情）：左栏 REST 分页列表 + 右栏 span 树详情。
  *
  * 布局按 #2 决议 IA 第 2 条：列表+详情左右分栏（原型 .trace-split，
- * 左 minmax(300px,380px) / 右自适应）。本票只做列表与选中样式；
- * 详情树归 M2-05（#20），SSE 实时插入归 M2-06。
+ * 左 minmax(300px,380px) / 右自适应）。SSE 实时插入归 M2-06。
  *
  * 数据流：REST 快照（GET /api/traces?page=&page_size=20）→ 前端 BigInt 倒序兜底
  * → 渲染。page 是唯一翻页真相，取数副作用绑在 [page, reloadTick] 上——
@@ -11,6 +10,7 @@
  * 竞态：每次 effect 自建 AbortController，cleanup 即 abort（连点只认最后一次）。
  *
  * 进行中判定 = root end_time_unix_nano 为 null（契约语义），不用前端计时器。
+ * 详情（右栏）由 TraceDetailPanel 自取 `GET /api/traces/{id}`（契约 §2.2 平铺 spans）。
  */
 
 import { useEffect, useState } from "react";
@@ -22,6 +22,7 @@ import {
   type TraceListItem,
 } from "../api/traces";
 import { ApiError } from "../api/client";
+import TraceDetailPanel from "../components/TraceDetailPanel";
 import TracePager, { totalPagesOf } from "../components/TracePager";
 import TraceRow, { TraceListEmpty } from "../components/TraceRow";
 import "./Trace.css";
@@ -129,7 +130,7 @@ export default function TracePage() {
           ) : null}
         </div>
         <div className="card trace-detail-card">
-          <SelectedPlaceholder selectedId={selectedId} state={state} />
+          <TraceDetailBody selectedId={selectedId} state={state} />
         </div>
       </div>
     </section>
@@ -182,23 +183,12 @@ function TraceListBody({
   );
 }
 
-/** 右栏（M2-05 #20 接管详情树；本票只做占位与选中回显）。 */
-function SelectedPlaceholder({ selectedId, state }: { selectedId: string | null; state: ListState }) {
+/** 右栏（M2-05 #20）：未选中 → 空态；选中 → span 树详情（自取 §2.2 详情）。 */
+function TraceDetailBody({ selectedId, state }: { selectedId: string | null; state: ListState }) {
   if (selectedId === null) {
-    return (
-      <TraceListEmpty title="从左侧选择一条 trace" hint="查看 span 树与实时生长" />
-    );
+    return <TraceListEmpty title="从左侧选择一条 trace" hint="查看 span 树与实时生长" />;
   }
-  const name =
-    state.kind === "ready" ? state.items.find((i) => i.trace_id === selectedId)?.name : undefined;
-  return (
-    <div className="detail-placeholder">
-      <div className="rail-cap detail-cap">SPAN 树</div>
-      <div className="detail-selected">
-        <span className="detail-selected-id">{selectedId}</span>
-        {name ? <span className="detail-selected-name">{name}</span> : null}
-      </div>
-      <div className="detail-hint">详情建设中（M2-05 span 树 / M2-06 实时生长）</div>
-    </div>
-  );
+  const listItem =
+    state.kind === "ready" ? state.items.find((i) => i.trace_id === selectedId) : undefined;
+  return <TraceDetailPanel traceId={selectedId} listItem={listItem} />;
 }

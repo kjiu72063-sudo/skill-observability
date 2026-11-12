@@ -40,9 +40,21 @@ function wireItemJson(fields: {
   );
 }
 
-/** 按 URL 返回分页体；pages[page] 为 items 原始 JSON 片段数组。 */
-function stubPagedApi(pages: Record<number, string[]>, total: number, pageSize = 20) {
+/** 按 URL 返回分页体；pages[page] 为 items 原始 JSON 片段数组。
+ *  details: trace_id → 详情响应原始 JSON（M2-05 起点行会触发 GET /api/traces/{id}）。 */
+function stubPagedApi(
+  pages: Record<number, string[]>,
+  total: number,
+  pageSize = 20,
+  details: Record<string, string> = {}
+) {
   const fetchMock = vi.fn().mockImplementation((url: string) => {
+    const detail = /^\/api\/traces\/([^?]+)$/.exec(url);
+    if (detail) {
+      const traceId = decodeURIComponent(detail[1]);
+      const body = details[traceId] ?? `{"trace_id":"${traceId}","spans":[]}`;
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(body) });
+    }
     const m = /^\/api\/traces\?page=(\d+)&page_size=(\d+)$/.exec(url);
     if (!m) return Promise.reject(new Error(`unexpected url: ${url}`));
     const page = Number(m[1]);
@@ -124,7 +136,7 @@ describe("Trace 列表渲染（M2-04 #19）", () => {
     expect(screen.queryByRole("navigation", { name: "Trace 列表分页" })).toBeNull();
   });
 
-  it("点行进入选中态（aria-pressed 翻转，右栏占位回显 trace_id）", async () => {
+  it("点行进入选中态（aria-pressed 翻转），右栏加载详情并回显 trace_id", async () => {
     stubPagedApi({ 1: [wireItemJson({})] }, 1);
     renderPage();
     const row = await screen.findByRole("button", { name: /invoke_agent customer-service/ });
@@ -134,8 +146,9 @@ describe("Trace 列表渲染（M2-04 #19）", () => {
 
     expect(row).toHaveAttribute("aria-pressed", "true");
     expect(row.className).toContain("selected");
-    expect(screen.getByText("4bf92f3577b34da6a3ce929d0e0e4736")).toBeInTheDocument();
-    expect(screen.getByText(/详情建设中/)).toBeInTheDocument();
+    // 右栏 trace 头带全值 trace_id（M3：不截断）
+    expect(await screen.findByTitle("4bf92f3577b34da6a3ce929d0e0e4736")).toBeInTheDocument();
+    expect(screen.getByText("本 trace 暂无 span")).toBeInTheDocument();
   });
 
   it("满页 20 行时每行的 meta 要素全在场（限高容器压扁行的防线）", async () => {
@@ -192,7 +205,7 @@ describe("Trace 分页（M2-04 #19）", () => {
     await screen.findByRole("button", { name: /trace page2/ });
     expect(fetchMock).toHaveBeenCalledWith("/api/traces?page=2&page_size=20", expect.anything());
     // 翻页后选中清空（跨页残留选中会让右栏与列表不同页）
-    expect(screen.queryByText(/详情建设中/)).toBeNull();
+    expect(screen.queryByText("SPAN 树")).toBeNull();
     expect(screen.getByText(/从左侧选择一条 trace/)).toBeInTheDocument();
   });
 
