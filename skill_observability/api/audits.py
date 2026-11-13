@@ -13,6 +13,8 @@ def build_audits_router(storage: Storage) -> APIRouter:
     @router.get("/api/audits")
     async def list_audits(
         verdict: str | None = Query(default=None, pattern="^(allow|block)$"),
+        # M2-07（#22）：契约 policy §3.2「新增过滤参数」表 action 行，原样实现
+        action: str | None = Query(default=None, pattern="^(block|audit)$"),
         agent_id: str | None = None,
         tool_name: str | None = None,
         rule_id: str | None = None,
@@ -22,7 +24,7 @@ def build_audits_router(storage: Storage) -> APIRouter:
         page_size: int = Query(default=20, ge=1, le=100),
     ) -> dict:
         items, total = storage.list_audits(
-            verdict, agent_id, tool_name, rule_id, from_ns, to, page, page_size
+            verdict, agent_id, tool_name, rule_id, from_ns, to, page, page_size, action
         )
         return {"items": items, "page": page, "page_size": page_size, "total": total}
 

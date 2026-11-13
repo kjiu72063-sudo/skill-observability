@@ -409,3 +409,88 @@ class TestDashboardStaticHosting:
         assert "npm run build" in resp.text  # 指引页含构建命令
         resp_api = client.get("/api/traces", params={"page_size": 1})
         assert resp_api.status_code == 200  # API 不受缺失影响
+
+
+# ---------------------------------------------------------------- M2-07（#22）：audits?action= 三态
+
+
+class TestAuditActionFilter:
+    """M2-07：`action` 参数三态（契约 policy §3.2「新增过滤参数」表首行）。
+
+    - `action=audit` ≙ `verdict='allow' AND action='audit'`（观察期命中，卡 5 同源）；
+    - `action=block` 行均 `verdict='block'`；
+    - `rule_id IS NULL` 的未命中行（action 为 NULL）不匹配任何 action 值。
+    """
+
+    def test_action_audit_is_observation_hits(self, run, client):
+        resp = client.get("/api/audits", params={"action": "audit"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1  # 本 run 恰一行观察期命中（手机号 r1b）
+        item = body["items"][0]
+        assert item["verdict"] == "allow"
+        assert item["action"] == "audit"
+        assert item["rule_id"] == "r1b-pii-phone-audit"
+        assert item["trace_id"] == run["trace_id"]
+
+    def test_action_block_rows_all_blocked(self, run, client):
+        resp = client.get("/api/audits", params={"action": "block"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1  # 本 run 恰一行拦截（身份证 r1）
+        assert all(a["verdict"] == "block" and a["action"] == "block" for a in body["items"])
+        assert body["items"][0]["rule_id"] == "r1-pii-id-card"
+
+    def test_action_filter_never_returns_miss_rows(self, run, client):
+        # 未命中行 action 为 NULL：两个 action 值都不该带出它（三行中永远排除的那一行）
+        all_rows = client.get("/api/audits", params={"page_size": 100}).json()["items"]
+        miss = [a for a in all_rows if a["rule_id"] is None]
+        assert len(miss) == 1 and miss[0]["action"] is None
+
+        for action in ("audit", "block"):
+            rows = client.get("/api/audits", params={"action": action, "page_size": 100}).json()["items"]
+            assert miss[0]["id"] not in {a["id"] for a in rows}
+
+    def test_action_and_verdict_combine_and_invalid_values_422(self, run, client):
+        # 组合是 AND：audit + allow 仍命中观察期那行；audit + block 为空集
+        both = client.get("/api/audits", params={"action": "audit", "verdict": "allow"})
+        assert both.status_code == 200 and both.json()["total"] == 1
+        empty = client.get("/api/audits", params={"action": "audit", "verdict": "block"})
+        assert empty.status_code == 200 and empty.json()["total"] == 0
+        # 非法值 422（pattern 校验与 verdict 同款）
+        for bad in ({"action": "observe"}, {"action": ""}, {"action": "BLOCK"}):
+            assert client.get("/api/audits", params=bad).status_code == 422
+
+    def test_action_audit_follows_contract_and_semantics(self, client, deps):
+        # 契约原文：action=audit ≙ verdict='allow' AND action='audit'——两个条件缺一不可。
+        # SDK 正常路径下 action='audit' 的行恒为 verdict='allow'（audit 动作不拦截），
+        # 所以这条 AND 子句只有面对非正常写入才可鉴别：直接落一行自相矛盾的
+        # verdict=block + action=audit（DDL 只做单列 CHECK，不禁止组合），
+        # 非法组合不得被 action=audit 带出（它是 block 行，归 action=block 也不对，
+        # 但契约钉死的是 allow 语义）。
+        defect_id = deps.storage.insert_audit(
+            trace_id="a" * 32, span_id="b" * 16, agent_id="customer-service",
+            tool_name="verify_customer_id", verdict="block", rule_id="r-road",
+            rule_name="异常快照", action="audit", reason="非正常写入",
+            payload_json="{}", payload_truncated=False, created_at_unix_nano=time.time_ns(),
+        )
+        rows = client.get("/api/audits", params={"action": "audit", "page_size": 100}).json()["items"]
+        assert all(a["verdict"] == "allow" and a["action"] == "audit" for a in rows)
+        assert defect_id not in {a["id"] for a in rows}
+
+    def test_action_filter_pagination_total_matches(self, client, deps):
+        # 造 3 行 audit + 2 行 block + 2 行未命中，验证 total 与翻页都按过滤后集合算
+        with deps.sdk.agent_run("customer-service"):
+            for i in range(3):
+                deps.sdk.execute_tool("query_contact_by_phone", {"phone": f"1380000000{i}"}, lambda: {})
+            for i in range(2):
+                with pytest.raises(PolicyBlocked):
+                    deps.sdk.execute_tool("verify_customer_id", {"id_card": f"11010119900307123{i}"}, lambda: {})
+            for i in range(2):
+                deps.sdk.execute_tool("query_user_db", {"order_id": f"2024{i}"}, lambda: {})
+
+        audit_total = client.get("/api/audits", params={"action": "audit", "page_size": 1}).json()["total"]
+        assert audit_total == 3
+        page2 = client.get("/api/audits", params={"action": "audit", "page_size": 2, "page": 2}).json()
+        assert len(page2["items"]) == 1 and page2["total"] == 3  # total 是过滤后总数，不是全表
+        assert all(a["action"] == "audit" and a["verdict"] == "allow" for a in page2["items"])

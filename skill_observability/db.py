@@ -318,13 +318,21 @@ class Storage:
     def list_audits(
         self, verdict: str | None, agent_id: str | None, tool_name: str | None,
         rule_id: str | None, from_ns: int | None, to_ns: int | None,
-        page: int, page_size: int,
+        page: int, page_size: int, action: str | None = None,
     ) -> tuple[list[dict], int]:
         where: list[str] = []
         params: list[Any] = []
         if verdict is not None:
             where.append("verdict = ?")
             params.append(verdict)
+        if action is not None:
+            # 契约 policy §3.2：#22 新增参数。action=audit ≙ 观察期命中口径
+            # （verdict='allow' AND action='audit'，与 §3.4 卡 5 同源）；action=block
+            # 的行本就必须 verdict=block。未命中行 action 为 NULL，两个值都不匹配。
+            where.append("action = ?")
+            params.append(action)
+            if action == "audit":
+                where.append("verdict = 'allow'")
         if agent_id is not None:
             where.append("agent_id = ?")
             params.append(agent_id)
