@@ -275,7 +275,9 @@ export class TraceStore {
   private readonly restDetails = new Map<string, TraceDetailView>();
   private readonly requestSeq = new Map<string, number>();
   private readonly pendingDetails = new Set<string>();
-  private readonly inflight = new Map<string, AbortController>();
+  /** 当前活跃详情请求：只保留最新一条，切 trace 时用它做取消（见 requestTraceDetail 注）。 */
+  private inflight: AbortController | null = null;
+  private activeTraceId: string | null = null;
   private readonly factory: EventSourceFactory | null;
   private stream: SpanStream | null = null;
   private status: StreamStatus;
@@ -342,6 +344,10 @@ export class TraceStore {
    *
    * 清空后由页面重取 REST（`resyncCount` 变化 → effect 重跑），SSE 回放
    * 重新喂 live。世代号让「换代前发出的 REST 请求」晚到时也不写回。
+   *
+   * **必须自己 `bump()`**：`onStatus` 的调用方随后也会 bump，但本方法是对外契约
+   * （测试、未来的重同步入口都会单独调），不能把「通知」隐式依赖在调用方身上。
+   * 少这一次通知的表现是：重连后详情面板不会重取，永远停在旧库的空态。
    */
   resetForResync(): void {
     this.generation++;
@@ -349,11 +355,13 @@ export class TraceStore {
     this.liveSpans.clear();
     this.buckets.clear();
     this.restDetails.clear();
-    // 在飞的详情请求全部取消：它们读的是旧库，结果一定要作废。
-    for (const ctrl of this.inflight.values()) ctrl.abort();
-    this.inflight.clear();
+    // 在飞的详情请求取消：它们读的是旧库，结果一定要作废。
+    this.inflight?.abort();
+    this.inflight = null;
+    this.activeTraceId = null;
     this.pendingDetails.clear();
     this.requestSeq.clear();
+    this.bump();
   }
 
   /** 事件入口：SSE 监听与单测共用（单测直接喂原始 payload 对象）。 */
@@ -436,19 +444,23 @@ export class TraceStore {
    * - 已取过仍会再取一次：重新进入详情时以 REST 刷新打底（期间旧数据保持可见，
    *   不闪 loading）；滚动期间只靠 SSE 增量，不重取。
    * - 并发去重：StrictMode 双挂载在同一个提交阶段触发两次 effect，只发一次请求。
-   * - `force`：重连重同步 / 用户重试时必须穿透去重，否则正在飞的旧请求会把
-   *   刚清空的详情态又填回幽灵数据（评审第一拍 P2）。
-   * - **取消**：同一 trace 的新请求取消旧请求（AbortController），快速切换 trace
-   *   不再留 N 个不取消的请求（评审第一拍 P2）。
    * - 世代守卫：响应落地时若数据源世代已变（重连过），整份丢弃。
+   *
+   * **取消语义（两拍才修对，写清楚免得再错）**：这里维护的是「当前只在看一条
+   * trace」这一事实——`activeTraceId` 记当前活跃 id，任何新请求都先取消**上一条
+   * 活跃 trace 的请求**，无论它是不是同一个 id。第一版按 `traceId` 建键去取消，
+   * A→B→C 快速切换时 key 各不相同、永远命中不了，等于没取消（评审第二拍 N1）。
+   * 同 id 重取（force）当然也在这条路径上。
    */
   requestTraceDetail(traceId: string, force = false): void {
     if (!force && this.pendingDetails.has(traceId)) return;
 
-    // 同 trace 的旧请求一律取消：force 重取与「切走再切回」都走这里。
-    this.inflight.get(traceId)?.abort();
+    // 切走 / 重取：取消上一条活跃 trace 的请求（含同 id 的旧请求）。
+    this.abortActiveRequest();
+    this.activeTraceId = traceId;
+
     const ctrl = new AbortController();
-    this.inflight.set(traceId, ctrl);
+    this.inflight = ctrl;
     this.pendingDetails.add(traceId);
 
     const previous = this.restDetails.get(traceId);
@@ -462,7 +474,7 @@ export class TraceStore {
       this.requestSeq.get(traceId) !== seq || this.generation !== generation;
 
     const settle = (): void => {
-      if (this.inflight.get(traceId) === ctrl) this.inflight.delete(traceId);
+      if (this.inflight === ctrl) this.inflight = null;
       if (this.requestSeq.get(traceId) === seq) this.pendingDetails.delete(traceId);
     };
 
@@ -480,6 +492,24 @@ export class TraceStore {
         settle();
         this.bump();
       });
+  }
+
+  /** 取消当前活跃详情请求（切 trace / 重连换代 / 离开详情都走这里）。 */
+  private abortActiveRequest(): void {
+    this.inflight?.abort();
+    this.inflight = null;
+    if (this.activeTraceId !== null) this.pendingDetails.delete(this.activeTraceId);
+  }
+
+  /**
+   * 组件卸载 / traceId 变化时的清理：取消本组件那条请求。
+   * 由 `useTraceDetailView` 的 effect cleanup 调用——「快速切换」发生时旧 effect
+   * 先 cleanup，请求当场取消，不必等新请求进来才补刀。
+   */
+  releaseTraceDetail(traceId: string): void {
+    if (this.activeTraceId !== traceId) return; // 已切到别处，别误伤新请求
+    this.abortActiveRequest();
+    this.activeTraceId = null;
   }
 
   retryTraceDetail(traceId: string): void {
@@ -551,11 +581,19 @@ export function useLiveTraceRows(): ReadonlyMap<string, LiveTraceRow> {
 
 export function useTraceDetailView(traceId: string): TraceDetailView {
   const version = useTraceStreamRevision();
-  // 重连成功必须 force 重取：此时 Store 刚清空全部详情态，而去重表也已清空，
-  // 但若重连前有请求在飞、它已被 abort（不会写回），仍需要一次干净的新请求。
   const resyncCount = useTraceStreamResyncCount();
+  // 是不是「这次重连之后该 trace 的首次取数」。用 ref 记「已为哪个 resync 令牌取过」，
+  // 没取过才 force——不能写成 `resyncCount > 0`：那是一次重连后永久粘住，
+  // 之后每次进详情都绕过去重，StrictMode 双挂载会多打一轮请求（评审第二拍 N4）。
+  const forcedForResync = useRef(resyncCount);
   useEffect(() => {
-    traceStore.requestTraceDetail(traceId, resyncCount > 0);
+    const needForce = forcedForResync.current !== resyncCount;
+    if (needForce) forcedForResync.current = resyncCount;
+    traceStore.requestTraceDetail(traceId, needForce);
+    // cleanup 取消本次请求：切 trace / 卸载时立刻收手，不等新请求来补刀。
+    // StrictMode 的伪卸载也会走到这里（dev 下会取消再重发一次），这是 React
+    // 故意暴露副作用的行为，prod 无此开销，不做特殊规避。
+    return () => traceStore.releaseTraceDetail(traceId);
   }, [traceId, resyncCount]);
   return useMemo(() => traceStore.getDetailView(traceId), [traceId, version]);
 }

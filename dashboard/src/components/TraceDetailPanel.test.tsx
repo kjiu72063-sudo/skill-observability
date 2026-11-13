@@ -350,4 +350,52 @@ describe("详情取数失败（M2-05 #20）", () => {
     renderPanel("x");
     expect(await screen.findByRole("alert")).toHaveTextContent("取数失败（HTTP 500）：boom");
   });
+
+  it("组件级切换 trace：A 的在飞请求被取消（评审第二拍 N1 回归）", async () => {
+    // Store 单测已覆盖 A→B→C；这条走真实组件，确认到组件层行为不变。
+    const signals: Array<{ url: string; signal: AbortSignal }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal) signals.push({ url, signal: init.signal });
+        return new Promise(() => {}); // 挂起：模拟慢详情接口
+      })
+    );
+
+    const { rerender } = render(<TraceDetailPanel traceId="trace-A" />);
+    await waitFor(() => expect(signals.length).toBeGreaterThanOrEqual(1));
+    const aCall = signals.find((s) => s.url === "/api/traces/trace-A");
+    expect(aCall).toBeDefined();
+    expect(aCall?.signal.aborted).toBe(false);
+
+    rerender(<TraceDetailPanel traceId="trace-B" />);
+    await waitFor(() => expect(aCall?.signal.aborted).toBe(true));
+
+    const bCall = signals.find((s) => s.url === "/api/traces/trace-B");
+    expect(bCall).toBeDefined();
+    expect(bCall?.signal.aborted).toBe(false);
+  });
+
+  it("纯卸载（不切 trace）也取消在飞请求 —— effect cleanup 的唯一职责", async () => {
+    // 上面的切换用例即使 hook 不写 cleanup 也会过（新请求的 abortActiveRequest 兜住了），
+    // 所以 cleanup 的真正价值只在「卸载且没有后继请求」：离开 Trace 页、选中被清空。
+    // 这条用例专门守它，mutation（把 cleanup 改成空函数）会红。
+    const signals: Array<{ url: string; signal: AbortSignal }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal) signals.push({ url, signal: init.signal });
+        return new Promise(() => {});
+      })
+    );
+
+    const { unmount } = render(<TraceDetailPanel traceId="trace-solo" />);
+    await waitFor(() => expect(signals.length).toBeGreaterThanOrEqual(1));
+    const call = signals.find((s) => s.url === "/api/traces/trace-solo");
+    expect(call?.signal.aborted).toBe(false);
+
+    unmount();
+    await waitFor(() => expect(call?.signal.aborted).toBe(true));
+  });
+
 });

@@ -9,6 +9,7 @@
  * 确保 losslessJson 改写真的被执行（#19 立过的锚点，避免假绿）；纯函数例直接给对象。
  */
 
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseLossless } from "../api/losslessJson";
@@ -19,7 +20,9 @@ import {
   mergeLiveTraceList,
   mergeSpans,
   normalizeSpanPayload,
+  traceStore,
   TraceStore,
+  useTraceDetailView,
   type LiveTraceRow,
 } from "./traceStore";
 import type { EventSourceFactory, EventSourceLike } from "./sse";
@@ -164,7 +167,7 @@ describe("合并语义（#21 票面四例）", () => {
     expect(merged[0].attributes).toEqual({ "gen_ai.tool.name": "query_user_db" });
   });
 
-  it("③ end 覆盖 start：整行快照全量覆盖，start 独有字段在 end 后消失", () => {
+  it("③ end 覆盖 start：整行快照全量覆盖，键集合与 end 完全一致", () => {
     const start = normalizeSpanPayload("span.start", {
       trace_id: TRACE,
       span_id: "aaaa000000000001",
@@ -189,16 +192,24 @@ describe("合并语义（#21 票面四例）", () => {
       agent_id: "customer-service",
     })!;
 
-    // 给 start 侧塞一个 end 快照里没有的键：merge 实现会把它带过来，overwrite 不会。
-    const withStartOnly = { ...start, attributes: { "start.only.key": "keep-me-not" } };
+    // 给 start 侧注入一个 end 快照里**完全不存在**的顶层键（类型系统外的脏数据）：
+    // 整行替换会把它丢掉；`{...existing, ...incoming}` 这种浅合并会把它留下。
+    // 这是本条用例的鉴别力所在——只断言 attributes 里的键做不到（incoming.attributes
+    // 整体覆盖，spread-merge 也能过，评审第二拍 N2 的 mutation 就卡在这里）。
+    const withStartOnly = {
+      ...start,
+      stale_top_level_key: "must-not-survive",
+    } as unknown as typeof start;
     const grown = applySpanEnd(withStartOnly, end);
-    expect(grown.attributes).toEqual({ "error.type": "policy.block" });
-    expect(grown.attributes).not.toHaveProperty("start.only.key");
-    // 值字段同理：end 的快照说了算
+
+    expect(Object.keys(grown).sort()).toEqual(Object.keys(end).sort());
+    expect(grown).not.toHaveProperty("stale_top_level_key");
+    // 值字段：end 的快照说了算
     expect(grown.name).toBe("new name");
     expect(grown.kind).toBe("CLIENT");
     expect(grown.status_code).toBe("ERROR");
     expect(grown.status_message).toBe("boom");
+    expect(grown.attributes).toEqual({ "error.type": "policy.block" });
     expect(grown.events).toHaveLength(1);
     // end 快照里 attributes 为空也要覆盖成空（不是保留 start 的）
     expect(applySpanEnd(withStartOnly, { ...end, attributes: {} }).attributes).toEqual({});
@@ -649,46 +660,113 @@ describe("重连换库：旧数据源状态必须整段作废（P1 修复回归�
     expect(signals[1].aborted).toBe(false);
     vi.unstubAllGlobals();
   });
+
+  it("快速切换 trace A→B→C：每条旧请求都被取消（评审第二拍 N1 回归）", () => {
+    const store = new TraceStore(null);
+    const signals: Array<{ url: string; signal: AbortSignal }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal) signals.push({ url, signal: init.signal });
+        return new Promise(() => {}); // 全部挂起，模拟慢网络
+      })
+    );
+
+    store.requestTraceDetail("A");
+    store.requestTraceDetail("B");
+    store.requestTraceDetail("C");
+
+    expect(signals.map((s) => s.url)).toEqual(["/api/traces/A", "/api/traces/B", "/api/traces/C"]);
+    // 第一版按 traceId 建键时这里全是 false（A/B 永远命中不了自己的 key）——
+    // 那是评审第二拍 N1 的现场。正确语义：只看一条，切走即取消。
+    expect(signals[0].signal.aborted).toBe(true);
+    expect(signals[1].signal.aborted).toBe(true);
+    expect(signals[2].signal.aborted).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("组件卸载（releaseTraceDetail）取消自己的请求，且不误伤新 trace", () => {
+    const store = new TraceStore(null);
+    const signals: Array<{ url: string; signal: AbortSignal }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal) signals.push({ url, signal: init.signal });
+        return new Promise(() => {});
+      })
+    );
+
+    store.requestTraceDetail("A");
+    store.releaseTraceDetail("A"); // A 的 effect cleanup
+    expect(signals[0].signal.aborted).toBe(true);
+
+    store.requestTraceDetail("B");
+    // A 的迟到 cleanup 不得误伤 B
+    store.releaseTraceDetail("A");
+    expect(signals[1].signal.aborted).toBe(false);
+    vi.unstubAllGlobals();
+  });
 });
 
-/* ---------------------------------------------------------------- 详情视图（REST + SSE） */
+/* ---------------------------------------------------------------- hook 级 force 策略（N4） */
 
-describe("详情视图合并（REST 初值 + 实时）", () => {
-  it("REST ready + 实时 end → ready 里同时有 REST 的其它 span 与实时 span", () => {
-    const store = new TraceStore(null);
-    // 直接铺 REST 终态（模拟 requestTraceDetail 的完成态）
-    const internal = store as unknown as {
-      restDetails: Map<string, { kind: "ready"; spans: TraceSpan[] }>;
-    };
-    internal.restDetails.set(TRACE, {
-      kind: "ready",
-      spans: [restSpan({ span_id: "root000000000000", name: "invoke_agent customer-service" })],
+/**
+ * 为什么必须 hook 级：N4 是「hook 传 force 的策略」问题，组件级测不出来——
+ * 组件里 effect 的 deps 不变时不会重跑，两种 force 实现表现完全一致。
+ * 只有直接驱动 hook、并让 `resyncCount` 真的变化，才能区分
+ * 「每次重连后只 force 一次」与「重连过一次就永远 force」。
+ *
+ * N4 的实际危害：force 恒真时 `pendingDetails` 去重分支永久失效——
+ * 同一 trace 的重复取数每次都真发请求。
+ */
+describe("useTraceDetailView 的 force 策略（评审第二拍 N4）", () => {
+  /** 记录所有发出的详情请求（挂起不 resolve，保持 in-flight 以观察去重）。 */
+  function stubHungFetch(): string[] {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        calls.push(url);
+        return new Promise(() => {});
+      })
+    );
+    return calls;
+  }
+
+  it("重连令牌未变化时：同一 trace 的重复渲染不产生新请求（force 不粘住）", () => {
+    const calls = stubHungFetch();
+    const { rerender } = renderHook(({ id }: { id: string }) => useTraceDetailView(id), {
+      initialProps: { id: "trace-a" },
     });
 
-    feed(store, "span.start", startWire({ span_id: "aaaa000000000001", parent_span_id: "root000000000000" }));
+    rerender({ id: "trace-a" });
+    rerender({ id: "trace-a" });
 
-    const view = store.getDetailView(TRACE);
-    expect(view.kind).toBe("ready");
-    if (view.kind !== "ready") throw new Error("unreachable");
-    expect(view.spans.map((s) => s.span_id).sort()).toEqual(["aaaa000000000001", "root000000000000"]);
+    expect(calls).toEqual(["/api/traces/trace-a"]);
   });
 
-  it("SSE 先到（REST 还没回）也不空等：已有 span 即可 ready", () => {
-    const store = new TraceStore(null);
-    feed(store, "span.start", startWire({ span_id: "aaaa000000000001", parent_span_id: null }));
-    const view = store.getDetailView(TRACE);
-    expect(view.kind).toBe("ready");
-  });
+  it("每次重连只 force 一次，后续同令牌取数重新走去重", () => {
+    const calls = stubHungFetch();
+    const { rerender } = renderHook(({ id }: { id: string }) => useTraceDetailView(id), {
+      initialProps: { id: "trace-b" },
+    });
+    expect(calls).toHaveLength(1);
 
-  it("REST 失败但实时有数据 → ready 让位错误态；无数据时保留错误", () => {
-    const store = new TraceStore(null);
-    const internal = store as unknown as {
-      restDetails: Map<string, { kind: "error"; message: string }>;
-    };
-    internal.restDetails.set(TRACE, { kind: "error", message: "取数失败（HTTP 500）：boom" });
-    expect(store.getDetailView(TRACE).kind).toBe("error");
+    // 重连一次：状态层清空 + 令牌 +1 → hook 必须 force 重取。
+    // 只断言「确实重取了」（>1），不断言精确次数：resetForResync 会同时推进
+    // version 与 resyncCount，effect 的触发轮次属 React 实现细节，
+    // 本用例要守的是「force 语义」而不是「dispatch 的精确次数」。
+    act(() => traceStore.resetForResync());
+    const afterFirstResync = calls.length;
+    expect(afterFirstResync).toBeGreaterThan(1);
 
-    feed(store, "span.start", startWire({ span_id: "aaaa000000000001", parent_span_id: null }));
-    expect(store.getDetailView(TRACE).kind).toBe("ready");
+    // 同一令牌下再渲染：不得再发（force 只作用于「重连后的首次」）
+    rerender({ id: "trace-b" });
+    rerender({ id: "trace-b" });
+    expect(calls).toHaveLength(afterFirstResync);
+
+    // 再重连一次 → 新令牌 → 又重取
+    act(() => traceStore.resetForResync());
+    expect(calls.length).toBeGreaterThan(afterFirstResync);
   });
 });

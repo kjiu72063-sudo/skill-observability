@@ -57,9 +57,10 @@ export default function TracePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 实时增量（第 1 页合并用）：每来一条 SSE 事件 +1 版本，列表/徽标随之重算
   const liveRows = useLiveTraceRows();
-  // 重连成功 = 浏览器刚用 Last-Event-ID 续传完。若断线期间服务重启过（demo.py 每次
-  // 启动删库），event_log 的 id 从头计数，旧游标大于新库所有 id → 续传事件被服务端
-  // 判「已回放」丢弃，只靠 SSE 会留永久空洞。故重连后重取一次 REST（同一 effect）。
+  // 重连成功 = 浏览器自动重连上来了。它**不会**带 Last-Event-ID（实测重连请求头
+  // 恒为空，见 sse.ts 注），断线期间的事件一律收不到；且若服务重启过（demo.py
+  // 每次启动删库），状态层里的旧 live 数据全是另一个库的。所以重连后状态层
+  // `resetForResync` 清空旧数据源，本页再重取一次 REST 把真数据拿回来。
   const resyncCount = useTraceStreamResyncCount();
 
   useEffect(() => {
