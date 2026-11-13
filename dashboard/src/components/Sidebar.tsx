@@ -3,8 +3,12 @@
  *
  * 结构对齐原型 .rail（prototype/kanban-infoarch 分支）：按钮 = 图标 + 标签 + rail-num；
  * 选中态由 NavLink aria-current 驱动（青 accent 渐变底 + 左侧青条，见 Shell.css）。
- * 徽标语义（#2 定案）：Trace/审计接真数据（挂载取一次，实时刷新归 M2-06）、
- * 规则恒「—」占位（/api/rules 等 M2-09）、统计无徽标（统计是 8 卡页面，无行数语义）。
+ * 徽标语义（#2 定案）：Trace/审计接真数据；规则恒「—」占位（/api/rules 等 M2-09）、
+ * 统计无徽标（统计是 8 卡页面，无行数语义）。
+ *
+ * 实时（M2-06 #21）：本组件是 SSE 连接的常驻宿主——始终挂载，故离开 Trace 页
+ * 徽标仍随事件增长。事件驱动、**不轮询**：每收到一条事件起 200ms 防抖，结束后
+ * 重取两枚 total（一次 run 十余条事件只触发一次重取）。
  */
 
 import { useEffect, useState } from "react";
@@ -12,6 +16,10 @@ import { NavLink } from "react-router-dom";
 
 import NavBadge from "./NavBadge";
 import { fetchAuditTotal, fetchTraceTotal } from "../api/client";
+import { useDebouncedStreamTick } from "../lib/traceStore";
+
+/** 徽标重取的防抖窗口（票面建议值）：一次场景 run 的事件洪峰合成一次重取。 */
+export const BADGE_DEBOUNCE_MS = 200;
 
 const icon = (
   paths: string,
@@ -56,12 +64,16 @@ const ITEMS: ReadonlyArray<{
 /** 徽标三态值：number=真数据 / null=占位「—」 / undefined=加载中或无徽标。 */
 type BadgeValue = number | null | undefined;
 
-/** 挂载时取一次两枚真数据徽标；两枚独立成败，一枚 500 不拖垮另一枚。 */
+/**
+ * 徽标取数：挂载取一次 + 每条 SSE 事件后 200ms 防抖重取（tick 由状态层给）。
+ * 两枚独立成败，一枚 500 不拖垮另一枚。
+ */
 function useNavTotals(): { traces: BadgeValue; audits: BadgeValue } {
   const [totals, setTotals] = useState<{ traces: BadgeValue; audits: BadgeValue }>({
     traces: undefined,
     audits: undefined,
   });
+  const tick = useDebouncedStreamTick(BADGE_DEBOUNCE_MS);
 
   useEffect(() => {
     let alive = true;
@@ -73,7 +85,7 @@ function useNavTotals(): { traces: BadgeValue; audits: BadgeValue } {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [tick]);
 
   return totals;
 }

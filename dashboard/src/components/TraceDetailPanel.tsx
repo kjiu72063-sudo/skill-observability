@@ -1,9 +1,9 @@
 /**
  * Trace 详情面板（M2-05 #20）：右栏主体 = trace 头 + 三层 span 树 + 选中 span 详情卡。
  *
- * 数据流：父层给 selectedId → 本组件 `GET /api/traces/{id}`（契约 §2.2 平铺 spans）
- * → buildSpanTree 前端建树。SSE 实时生长归 M2-06（本票 REST 快照）。
- * 竞态：每次 effect 自建 AbortController + 世代守卫——快速切换行只认最后一次。
+ * 数据流（M2-06 #21 起）：span 由实时状态层供给——REST 初值打底 + SSE 增量合并
+ * （traceStore.getDetailView），本组件不再自取。树渲染与详情卡逻辑不变。
+ * 竞态与去重归状态层（请求去重 / 世代守卫 / 按 span_id upsert）。
  *
  * M3：trace_id 全值 hover（title）+ 一键复制，复制结果就地回显「已复制」/「复制失败」。
  * 树选中态独立于左栏选中：切换左栏 trace 时清空 span 选中（不同 trace 的 span_id 无意义）。
@@ -11,12 +11,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError } from "../api/client";
-import { fetchTraceDetail, type TraceDetail, type TraceListItem } from "../api/traces";
+import type { TraceListItem } from "../api/traces";
 import SpanDetailCard from "./SpanDetailCard";
 import SpanTree from "./SpanTree";
 import { TraceListEmpty } from "./TraceRow";
 import { buildSpanTree } from "../lib/spanTree";
+import { traceStore, useTraceDetailView } from "../lib/traceStore";
 
 /**
  * 复制文本（M3）：`navigator.clipboard` 优先（127.0.0.1 属安全上下文），
@@ -51,11 +51,6 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-type DetailState =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; detail: TraceDetail };
-
 export default function TraceDetailPanel({
   traceId,
   listItem,
@@ -64,51 +59,25 @@ export default function TraceDetailPanel({
   /** 列表行数据：树头直接复用（名称/agent/时间无需二次推算） */
   listItem?: TraceListItem;
 }) {
-  const [state, setState] = useState<DetailState>({ kind: "loading" });
+  // 状态层供给：REST 打底 + SSE 增量（#21）。requestTraceDetail 由 hook 在 traceId 变化时触发。
+  const state = useTraceDetailView(traceId);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "ok" | "fail">("idle");
-  const [reloadTick, setReloadTick] = useState(0);
   const copyTimer = useRef<number | undefined>(undefined);
 
   // 卸载时清掉复制反馈定时器（否则卸载后 setState 是空跑，且计时器泄漏 2s）
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
+  // 换 trace 时 span 选中必须清空（旧 id 在新树里不存在，留着会渲染出「无选中」的错觉）
   useEffect(() => {
-    const ctrl = new AbortController();
-    let alive = true;
-    setState({ kind: "loading" });
-    // 换 trace 时 span 选中必须清空（旧 id 在新树里不存在，留着会渲染出「无选中」的错觉）
     setSelectedSpanId(null);
     setCopyState("idle");
-    fetchTraceDetail(traceId, ctrl.signal)
-      .then((detail) => {
-        if (!alive) return;
-        setState({ kind: "ready", detail });
-      })
-      .catch((err: unknown) => {
-        if (!alive) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        const message =
-          err instanceof ApiError
-            ? err.status === 404
-              ? "trace 不存在（可能已被重置数据库移除）"
-              : `取数失败（HTTP ${err.status}）：${err.detail}`
-            : err instanceof Error
-              ? err.message
-              : "取数失败";
-        setState({ kind: "error", message });
-      });
-    return () => {
-      alive = false;
-      ctrl.abort();
-    };
-  }, [traceId, reloadTick]);
+  }, [traceId]);
 
-  const tree = state.kind === "ready" ? buildSpanTree(state.detail.spans) : null;
+  const spans = state.kind === "ready" ? state.spans : [];
+  const tree = state.kind === "ready" ? buildSpanTree(spans) : null;
   const selectedSpan =
-    state.kind === "ready" && selectedSpanId !== null
-      ? (state.detail.spans.find((s) => s.span_id === selectedSpanId) ?? null)
-      : null;
+    selectedSpanId !== null ? (spans.find((s) => s.span_id === selectedSpanId) ?? null) : null;
 
   const handleCopy = async () => {
     const ok = await copyText(traceId);
@@ -118,7 +87,7 @@ export default function TraceDetailPanel({
     copyTimer.current = window.setTimeout(() => setCopyState("idle"), 2000);
   };
 
-  const spanCount = state.kind === "ready" ? state.detail.spans.length : null;
+  const spanCount = state.kind === "ready" ? spans.length : null;
 
   return (
     <div className="trace-detail">
@@ -159,7 +128,7 @@ export default function TraceDetailPanel({
           <button
             type="button"
             className="pager-btn retry-btn"
-            onClick={() => setReloadTick((t) => t + 1)}
+            onClick={() => traceStore.retryTraceDetail(traceId)}
           >
             重试
           </button>
