@@ -770,3 +770,49 @@ describe("useTraceDetailView 的 force 策略（评审第二拍 N4）", () => {
     expect(calls.length).toBeGreaterThan(afterFirstResync);
   });
 });
+
+/* ---------------------------------------------------------------- 详情视图（REST + SSE） */
+
+/**
+ * 这 3 条在第二拍修复时被误删（截断文件时正好切到此处），第三拍评审 D1 要求补回。
+ * 它们覆盖 `getDetailView` 的三条分支：REST ready 合并、SSE 先到、REST 错误态让位。
+ */
+describe("详情视图合并（REST 初值 + 实时）", () => {
+  it("REST ready + 实时 end → ready 里同时有 REST 的其它 span 与实时 span", () => {
+    const store = new TraceStore(null);
+    // 直接铺 REST 终态（模拟 requestTraceDetail 的完成态）
+    const internal = store as unknown as {
+      restDetails: Map<string, { kind: "ready"; spans: TraceSpan[] }>;
+    };
+    internal.restDetails.set(TRACE, {
+      kind: "ready",
+      spans: [restSpan({ span_id: "root000000000000", name: "invoke_agent customer-service" })],
+    });
+
+    feed(store, "span.start", startWire({ span_id: "aaaa000000000001", parent_span_id: "root000000000000" }));
+
+    const view = store.getDetailView(TRACE);
+    expect(view.kind).toBe("ready");
+    if (view.kind !== "ready") throw new Error("unreachable");
+    expect(view.spans.map((s) => s.span_id).sort()).toEqual(["aaaa000000000001", "root000000000000"]);
+  });
+
+  it("SSE 先到（REST 还没回）也不空等：已有 span 即可 ready", () => {
+    const store = new TraceStore(null);
+    feed(store, "span.start", startWire({ span_id: "aaaa000000000001", parent_span_id: null }));
+    const view = store.getDetailView(TRACE);
+    expect(view.kind).toBe("ready");
+  });
+
+  it("REST 失败但实时有数据 → ready 让位错误态；无数据时保留错误", () => {
+    const store = new TraceStore(null);
+    const internal = store as unknown as {
+      restDetails: Map<string, { kind: "error"; message: string }>;
+    };
+    internal.restDetails.set(TRACE, { kind: "error", message: "取数失败（HTTP 500）：boom" });
+    expect(store.getDetailView(TRACE).kind).toBe("error");
+
+    feed(store, "span.start", startWire({ span_id: "aaaa000000000001", parent_span_id: null }));
+    expect(store.getDetailView(TRACE).kind).toBe("ready");
+  });
+});
