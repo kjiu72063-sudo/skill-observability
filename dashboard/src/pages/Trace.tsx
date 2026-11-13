@@ -7,13 +7,14 @@
  *
  * 数据流：REST 快照（GET /api/traces?page=&page_size=20）打底 → 第 1 页叠加
  * SSE 增量（traceStore，按 span_id 幂等 upsert）→ 前端 BigInt 倒序兜底 → 渲染。
- * page 是唯一翻页真相，取数副作用绑在 [page, reloadTick] 上——越界页、重试原页
- * 都由状态机保证，不靠事件处理器补丁。
+ * page 是唯一翻页真相，取数副作用绑在 [page, reloadTick, resyncCount] 上——
+ * 越界页、重试原页、重连重同步都由状态机保证，不靠事件处理器补丁。
  * 实时合并只作用第 1 页（page≠1 时只更新徽标，翻回第 1 页以 REST 重取为准）。
  * 竞态：每次 effect 自建 AbortController，cleanup 即 abort（连点只认最后一次）。
  *
  * 进行中判定 = root end_time_unix_nano 为 null（契约语义），不用前端计时器。
- * 断线：EventSource 的 error 态只显示顶部黄条，重连交给浏览器原生 Last-Event-ID。
+ * 断线：EventSource 的 error 态只显示顶部黄条；重连成功后状态层清空旧数据源
+ * （`resetForResync`）并让本页重取 REST——重连不带 Last-Event-ID，靠 REST 兜底。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -174,16 +175,20 @@ export default function TracePage() {
 }
 
 /**
- * 断线黄条（票面验收：服务停 → 顶部黄条 + 浏览器原生自动重连）。
+ * 断线黄条（票面：服务停 → 顶部黄条 + 浏览器原生自动重连）。
  * static（无 EventSource 环境）与正常态不渲染；错误态由 EventSource 自身重试，
  * 恢复时 `onopen` 会把状态翻回 open、黄条自动消失。
+ *
+ * 文案只承诺实现真的做到的事：重连后**重新同步数据**（状态层清空旧数据源 +
+ * 页面重取 REST）。早期版本写「按 Last-Event-ID 补齐」是假话——实测浏览器
+ * 重连并不携带该请求头（评审第一拍 P1②），不能对用户这么写。
  */
 function StreamBanner() {
   const status = useTraceStreamStatus();
   if (status !== "error") return null;
   return (
     <div className="live-banner" role="status" aria-live="polite">
-      实时连接中断，浏览器正在自动重连（恢复后事件按 Last-Event-ID 补齐）
+      实时连接中断，浏览器正在自动重连（恢复后自动重新同步数据）
     </div>
   );
 }

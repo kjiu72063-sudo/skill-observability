@@ -164,7 +164,7 @@ describe("合并语义（#21 票面四例）", () => {
     expect(merged[0].attributes).toEqual({ "gen_ai.tool.name": "query_user_db" });
   });
 
-  it("③ end 覆盖 start：整行快照全量覆盖，旧字段一个不留", () => {
+  it("③ end 覆盖 start：整行快照全量覆盖，start 独有字段在 end 后消失", () => {
     const start = normalizeSpanPayload("span.start", {
       trace_id: TRACE,
       span_id: "aaaa000000000001",
@@ -189,14 +189,19 @@ describe("合并语义（#21 票面四例）", () => {
       agent_id: "customer-service",
     })!;
 
-    const grown = applySpanEnd(start, end);
+    // 给 start 侧塞一个 end 快照里没有的键：merge 实现会把它带过来，overwrite 不会。
+    const withStartOnly = { ...start, attributes: { "start.only.key": "keep-me-not" } };
+    const grown = applySpanEnd(withStartOnly, end);
+    expect(grown.attributes).toEqual({ "error.type": "policy.block" });
+    expect(grown.attributes).not.toHaveProperty("start.only.key");
+    // 值字段同理：end 的快照说了算
     expect(grown.name).toBe("new name");
     expect(grown.kind).toBe("CLIENT");
     expect(grown.status_code).toBe("ERROR");
     expect(grown.status_message).toBe("boom");
     expect(grown.events).toHaveLength(1);
-    // 全量覆盖：不是「合并字段」，start 侧没有的字段由 end 决定
-    expect(applySpanEnd(start, { ...end, attributes: {} }).attributes).toEqual({});
+    // end 快照里 attributes 为空也要覆盖成空（不是保留 start 的）
+    expect(applySpanEnd(withStartOnly, { ...end, attributes: {} }).attributes).toEqual({});
   });
 
   it("④ 重复事件幂等：同一 start 两次、同一 end 两次，结果与一次相同", () => {
@@ -342,7 +347,7 @@ describe("列表增量合并（只作用第 1 页）", () => {
   });
 
   it("服务端换库（旧实时行全部比 REST 最新行更老）→ 不诈尸", () => {
-    // demo.py 每次启动删库：REST 只剩新库的 1 条，状态层还留着上一轮的 live 行
+    // 前提：重连时 resetForResync 已清空旧 live（否则空库场景无基准线可依，见下一例）
     const items = [restItem("fresh", "9000")];
     const live = new Map([
       ["stale1", liveRow("stale1", "100", { span_count: 7 })],
@@ -352,6 +357,18 @@ describe("列表增量合并（只作用第 1 页）", () => {
     const merged = mergeLiveTraceList(items, live, 20);
     expect(merged.items.map((i) => i.trace_id)).toEqual(["fresh"]);
     expect(merged.inserted).toBe(0);
+  });
+
+  it("空快照 + 残留 live 行：mergeLiveTraceList 会全放行（故剔除必须靠 resetForResync）", () => {
+    // 这是评审第一拍 P1 的现场：换库后新库为空，watermark 无基准线。
+    // 单看这个纯函数，它会给出幽灵行——所以「剔除旧数据」不是它的职责，
+    // 由 Store.resetForResync 在换代瞬间整段清空。此用例把这条契约钉死。
+    const merged = mergeLiveTraceList(
+      [],
+      new Map([["old-a", liveRow("old-a", "100")], ["old-b", liveRow("old-b", "200")]]),
+      20
+    );
+    expect(merged.inserted).toBe(2);
   });
 
   it("首连全量回放的历史 trace 不重复计入 total（只数比快照最新一行更新的）", () => {
@@ -489,6 +506,148 @@ describe("连接生命周期（单连接 / 常驻 / 续传依赖浏览器原生�
     source.onerror?.(new Event("error"));
     source.onopen?.(new Event("open"));
     expect(store.getResyncCount()).toBe(2);
+  });
+});
+
+/* ---------------------------------------------------------------- 重连换库（评审第一拍 P1） */
+
+describe("重连换库：旧数据源状态必须整段作废（P1 修复回归）", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+  });
+
+  /** 造一个「旧库里有一条已收口 trace」的 Store。 */
+  function seedOldDatabase(store: TraceStore): void {
+    feed(
+      store,
+      "span.start",
+      startWire({ trace_id: "old-trace", span_id: "old-root", parent_span_id: null })
+    );
+    feed(
+      store,
+      "span.end",
+      endWire({ trace_id: "old-trace", span_id: "old-root", parent_span_id: null })
+    );
+  }
+
+  it("换库重连后 live 行清零 → 列表无幽灵行、inserted 不为幽灵数（PROBE_A 回归）", () => {
+    const store = new TraceStore(fakeFactory);
+    store.subscribe(() => {});
+    seedOldDatabase(store);
+    expect([...store.getLiveRows().keys()]).toEqual(["old-trace"]);
+
+    const source = FakeEventSource.instances[0];
+    source.onerror?.(new Event("error"));
+    source.onopen?.(new Event("open")); // 重连成功 → resetForResync
+
+    // 换库后 REST 还没有数据（新库空）：旧行必须已经不在
+    expect([...store.getLiveRows().keys()]).toEqual([]);
+    const merged = mergeLiveTraceList([], store.getLiveRows(), 20);
+    expect(merged.items).toEqual([]);
+    expect(merged.inserted).toBe(0);
+  });
+
+  it("换库重连后 live span 清零 → 详情无幽灵树（PROBE_B 回归）", () => {
+    const store = new TraceStore(fakeFactory);
+    store.subscribe(() => {});
+    seedOldDatabase(store);
+    expect(store.getDetailView("old-trace").kind).toBe("ready"); // 点开能看到旧树
+
+    const source = FakeEventSource.instances[0];
+    source.onerror?.(new Event("error"));
+    source.onopen?.(new Event("open"));
+
+    // 新库里没有这条 trace：不能再拿旧 live 数据冒充 ready
+    expect(store.getDetailView("old-trace").kind).not.toBe("ready");
+  });
+
+  it("换库重连后 REST 404 + 旧 live 残留 → 错误态不被让位（PROBE_B 的直接断言）", () => {
+    const store = new TraceStore(fakeFactory);
+    store.subscribe(() => {});
+    seedOldDatabase(store);
+    const source = FakeEventSource.instances[0];
+    source.onerror?.(new Event("error"));
+    source.onopen?.(new Event("open"));
+
+    // 模拟重取后拿到 404
+    const internal = store as unknown as {
+      restDetails: Map<string, { kind: "error"; message: string }>;
+    };
+    internal.restDetails.set("old-trace", { kind: "error", message: "trace 不存在" });
+    const view = store.getDetailView("old-trace");
+    expect(view.kind).toBe("error");
+  });
+
+  it("换代前发出的 REST 响应晚到也不写回（世代守卫）", async () => {
+    const store = new TraceStore(null); // 无 SSE，直接测请求路径
+    let resolveOld: ((v: unknown) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    store.requestTraceDetail("t1"); // 发起旧世代请求
+    store.resetForResync(); // 换代
+    resolveOld?.({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(`{"trace_id":"t1","spans":[]}`),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // 旧响应不得写回：换代后还没重新请求，详情应为 loading 而非 ready
+    expect(store.getDetailView("t1").kind).toBe("loading");
+    vi.unstubAllGlobals();
+  });
+
+  it("resetForResync 取消在飞请求（AbortController 生效）", () => {
+    const store = new TraceStore(null);
+    const abortSpy = vi.fn();
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise(() => {}); // 永不 resolve：模拟在飞
+      })
+    );
+
+    store.requestTraceDetail("t1");
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(false);
+
+    store.resetForResync();
+    expect(signals[0].aborted).toBe(true);
+    void abortSpy;
+    vi.unstubAllGlobals();
+  });
+
+  it("force 重取会取消在飞的旧请求（不留悬挂请求）", () => {
+    const store = new TraceStore(null);
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url: string, init?: { signal?: AbortSignal }) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise(() => {});
+      })
+    );
+
+    store.requestTraceDetail("t1");
+    // 未 force 的重复请求被 pendingDetails 去重（StrictMode 双挂载只发一次）——不是取消
+    store.requestTraceDetail("t1");
+    expect(signals).toHaveLength(1);
+
+    // force（重试 / 重连重同步）穿透去重，并取消旧请求
+    store.requestTraceDetail("t1", true);
+    expect(signals).toHaveLength(2);
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+    vi.unstubAllGlobals();
   });
 });
 

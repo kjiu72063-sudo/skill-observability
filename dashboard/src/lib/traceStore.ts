@@ -12,7 +12,9 @@
  *
  * 连接生命周期：#2 的 M2 注意项要求 StrictMode 双挂载下只有 1 条 EventSource、
  * 离开 Trace 页不断流——因此连接挂在模块级单例上（首个订阅者触发，永不随组件
- * 卸载关闭），重连完全交给浏览器原生 `Last-Event-ID` 语义，不做轮询、不自研重连。
+ * 卸载关闭）。重连本身交给浏览器原生行为，**但重连成功后必须做一次数据源重置**
+ * （见 `resetForResync`）：浏览器重连不带 Last-Event-ID 时续传会整段丢失，
+ * 且断线期间服务可能换库，旧 live 状态会变成幽灵行/幽灵树。
  *
  * 纳秒：SSE 的 `event.data` 已在 sse.ts 走 parseLossless，本层只按字符串承载，
  * 排序比较用 BigInt。
@@ -200,13 +202,16 @@ function liveRowToListItem(row: LiveTraceRow): TraceListItem {
  * REST 第 1 页 + 实时增量 → 展示用列表。
  * - 已有行按 trace_id 叠加（root 收口、span 数取两者较大、拦截徽标单调增）；
  * - 新 trace 行插到顶部，并按 pageSize 截断（只显示最新一页）；
- * - **fresh 的判定 = 「不在本页且比本页最新一行更新」**。这个基准线同时解决三件事：
- *   ① 首连全量回放的历史 trace 早已被 REST total 计入，不能重复计数/插行；
- *   ② 更老的新 trace 属于后面的页，插进第 1 页会和分页语义打架；
- *   ③ 服务端换库（demo.py 每次启动删库）后，状态层残留的旧 live 行会全部落在
- *      基准线之下——自然被剔除，不会在列表里诈尸。
- * - `inserted` = fresh 的总数（REST 快照之后新出现的 trace），分页控件用
- *   `total + inserted` 显示真数；REST 为空（无基准线）时全部算新增。
+ * - **fresh 的判定 = 「不在本页且比本页最新一行更新」**：① 首连全量回放的历史
+ *   trace 早已被 REST total 计入，不能重复计数/插行；② 更老的新 trace 属于后面
+ *   的页，插进第 1 页会和分页语义打架。
+ * - `inserted` = fresh 的总数，分页控件用 `total + inserted` 显示真数。
+ *
+ * **空快照不构成剔除依据**：`items` 为空时无基准线可比，此处会把所有 live 行
+ * 当新增——这是把「REST 还没回来/换库后为空」当成「全是新的」。剔除旧 live 行
+ * 不是本函数的职责，由 `TraceStore.resetForResync` 在重连时整段清空（评审第一拍
+ * P1 的根因就在把这两件事混在一起：换库后新库为空，watermark 为 null，旧行全部
+ * 插回，列表出现 N 条 404 幽灵行）。
  */
 export function mergeLiveTraceList(
   items: readonly TraceListItem[],
@@ -250,11 +255,6 @@ export type TraceDetailView =
   | { kind: "error"; message: string }
   | { kind: "ready"; spans: TraceSpan[] };
 
-type RestDetailState =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; spans: TraceSpan[] };
-
 function detailErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     return err.status === 404
@@ -272,15 +272,21 @@ export class TraceStore {
   private readonly listeners = new Set<Listener>();
   private readonly liveSpans = new Map<string, Map<string, TraceSpan>>();
   private readonly buckets = new Map<string, LiveBucket>();
-  private readonly restDetails = new Map<string, RestDetailState>();
+  private readonly restDetails = new Map<string, TraceDetailView>();
   private readonly requestSeq = new Map<string, number>();
   private readonly pendingDetails = new Set<string>();
+  private readonly inflight = new Map<string, AbortController>();
   private readonly factory: EventSourceFactory | null;
   private stream: SpanStream | null = null;
   private status: StreamStatus;
   private version = 0;
   /** 重连成功（error → open）的次数：REST 重同步的触发器，见 Trace.tsx。 */
   private resyncCount = 0;
+  /**
+   * 数据源世代：每次重连 +1。REST 响应落地时若世代已变，说明这份数据来自
+   * 「断线前那个库」，整份丢弃——否则换库后的旧响应会把刚清空的幽灵数据写回。
+   */
+  private generation = 0;
 
   constructor(factory: EventSourceFactory | null) {
     this.factory = factory;
@@ -313,17 +319,41 @@ export class TraceStore {
         onStatus: (next) => {
           // 'open' / 'error' 两种回调都可能重复触发；同值不通知，避免无谓渲染。
           if (this.status === next) return;
-          // error → open = 浏览器用 Last-Event-ID 重连成功。此时让页面重取 REST：
-          // 断线期间服务若重启过（demo.py 每次启动删库），event_log 的 id 会从头开始，
-          // 浏览器的旧游标比新库里所有 id 都大 → 续传事件全被服务端判「已回放」丢弃，
-          // 只靠 SSE 会出现永久空洞。REST 重同步是可观测的最新真相，必须补这一步。
-          if (next === "open" && this.status === "error") this.resyncCount++;
+          if (next === "open" && this.status === "error") {
+            // 重连成功：旧数据源的所有局部状态作废（见 resetForResync 注）。
+            this.resetForResync();
+          }
           this.status = next;
           this.bump();
         },
       },
       this.factory
     );
+  }
+
+  /**
+   * 重连成功后的数据源重置（评审第一拍 P1 的修复点）。
+   *
+   * 为什么必须整段清空而不是「按 watermark 剔除」：断线期间服务可能换库
+   * （`demo.py` 每次启动 `DB_PATH.unlink`）。新库为空时 REST 快照也空，
+   * 任何基于窗口的启发式都没有基准线，只能把旧 live 行当新增——列表出现
+   * N 条 404 幽灵行，详情面板渲染幽灵树。数据源一旦换代，旧的 live/详情
+   * 状态在语义上就是垃圾，不存在「部分有效」。
+   *
+   * 清空后由页面重取 REST（`resyncCount` 变化 → effect 重跑），SSE 回放
+   * 重新喂 live。世代号让「换代前发出的 REST 请求」晚到时也不写回。
+   */
+  resetForResync(): void {
+    this.generation++;
+    this.resyncCount++;
+    this.liveSpans.clear();
+    this.buckets.clear();
+    this.restDetails.clear();
+    // 在飞的详情请求全部取消：它们读的是旧库，结果一定要作废。
+    for (const ctrl of this.inflight.values()) ctrl.abort();
+    this.inflight.clear();
+    this.pendingDetails.clear();
+    this.requestSeq.clear();
   }
 
   /** 事件入口：SSE 监听与单测共用（单测直接喂原始 payload 对象）。 */
@@ -406,10 +436,19 @@ export class TraceStore {
    * - 已取过仍会再取一次：重新进入详情时以 REST 刷新打底（期间旧数据保持可见，
    *   不闪 loading）；滚动期间只靠 SSE 增量，不重取。
    * - 并发去重：StrictMode 双挂载在同一个提交阶段触发两次 effect，只发一次请求。
-   * - 世代守卫：同一 trace 的旧响应晚到，不覆盖新响应。
+   * - `force`：重连重同步 / 用户重试时必须穿透去重，否则正在飞的旧请求会把
+   *   刚清空的详情态又填回幽灵数据（评审第一拍 P2）。
+   * - **取消**：同一 trace 的新请求取消旧请求（AbortController），快速切换 trace
+   *   不再留 N 个不取消的请求（评审第一拍 P2）。
+   * - 世代守卫：响应落地时若数据源世代已变（重连过），整份丢弃。
    */
   requestTraceDetail(traceId: string, force = false): void {
     if (!force && this.pendingDetails.has(traceId)) return;
+
+    // 同 trace 的旧请求一律取消：force 重取与「切走再切回」都走这里。
+    this.inflight.get(traceId)?.abort();
+    const ctrl = new AbortController();
+    this.inflight.set(traceId, ctrl);
     this.pendingDetails.add(traceId);
 
     const previous = this.restDetails.get(traceId);
@@ -418,19 +457,25 @@ export class TraceStore {
 
     const seq = (this.requestSeq.get(traceId) ?? 0) + 1;
     this.requestSeq.set(traceId, seq);
+    const generation = this.generation;
+    const isStale = (): boolean =>
+      this.requestSeq.get(traceId) !== seq || this.generation !== generation;
+
     const settle = (): void => {
+      if (this.inflight.get(traceId) === ctrl) this.inflight.delete(traceId);
       if (this.requestSeq.get(traceId) === seq) this.pendingDetails.delete(traceId);
     };
 
-    fetchTraceDetail(traceId)
+    fetchTraceDetail(traceId, ctrl.signal)
       .then((detail) => {
-        if (this.requestSeq.get(traceId) !== seq) return; // 旧响应：丢弃，不覆盖
+        if (isStale()) return; // 旧响应 / 换代前响应：丢弃，不覆盖
         this.restDetails.set(traceId, { kind: "ready", spans: detail.spans });
         settle();
         this.bump();
       })
       .catch((err: unknown) => {
-        if (this.requestSeq.get(traceId) !== seq) return;
+        if (isStale()) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
         this.restDetails.set(traceId, { kind: "error", message: detailErrorMessage(err) });
         settle();
         this.bump();
@@ -464,21 +509,23 @@ export function useTraceStreamRevision(): number {
 
 /**
  * 事件驱动的防抖重取（票面：徽标 total 只在收到事件后 debounce 重取，禁轮询）。
- * 返回的 tick 在「事件洪峰静默 debounceMs 后」+1；首帧不排期（调用方的挂载
- * effect 已取过一次，避免启动时双请求）。定时器在下次事件/卸载时清掉——
- * 只保留最后一次，持续事件流不会每 200ms 打一枪。
+ * 返回的 tick 在「事件洪峰静默 debounceMs 后」+1；首个 revision 不排期
+ * （调用方的挂载 effect 已取过一次，避免启动时双请求）。
+ *
+ * 用 `lastRevision` 记「上一版」而不是 `firstRun` 布尔：StrictMode 的
+ * setup→cleanup→setup 会让布尔标记在第一次 setup 就被消耗掉，第二次 setup
+ * 便无条件排一个定时器（dev 下每次挂载多打一轮徽标请求，评审第一拍 S6）。
+ * 按 revision 是否变化判断，两次 setup 看到同一个 revision，都不会排期。
  */
 export function useDebouncedStreamTick(debounceMs: number): number {
   const revision = useTraceStreamRevision();
   const [tick, setTick] = useState(0);
   const timer = useRef<number | undefined>(undefined);
-  const firstRun = useRef(true);
+  const lastRevision = useRef(revision);
 
   useEffect(() => {
-    if (firstRun.current) {
-      firstRun.current = false; // 挂载：不排期（mount effect 自带首次取数）
-      return;
-    }
+    if (lastRevision.current === revision) return; // 首帧 / 重复 setup：不排期
+    lastRevision.current = revision;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setTick((t) => t + 1), debounceMs);
     return () => window.clearTimeout(timer.current);
@@ -504,11 +551,11 @@ export function useLiveTraceRows(): ReadonlyMap<string, LiveTraceRow> {
 
 export function useTraceDetailView(traceId: string): TraceDetailView {
   const version = useTraceStreamRevision();
-  // 重连成功也要重取：断线期间服务若换库，续传会被旧游标整段跳过（见 ensureConnected 注），
-  // REST 是唯一能补出真实终态的通道。
+  // 重连成功必须 force 重取：此时 Store 刚清空全部详情态，而去重表也已清空，
+  // 但若重连前有请求在飞、它已被 abort（不会写回），仍需要一次干净的新请求。
   const resyncCount = useTraceStreamResyncCount();
   useEffect(() => {
-    traceStore.requestTraceDetail(traceId);
+    traceStore.requestTraceDetail(traceId, resyncCount > 0);
   }, [traceId, resyncCount]);
   return useMemo(() => traceStore.getDetailView(traceId), [traceId, version]);
 }
