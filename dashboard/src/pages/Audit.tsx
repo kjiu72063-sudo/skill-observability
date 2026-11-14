@@ -24,6 +24,7 @@ import { ApiError } from "../api/client";
 import AuditFilters from "../components/AuditFilters";
 import AuditPager from "../components/AuditPager";
 import AuditTable, { AuditTableEmpty } from "../components/AuditTable";
+import { totalPagesOf } from "../components/TracePager";
 import "./Audit.css";
 
 type ListState =
@@ -52,6 +53,14 @@ export default function AuditPage() {
     fetchAudits(page, filter, AUDIT_PAGE_SIZE, ctrl.signal)
       .then((body) => {
         if (!alive) return;
+        // DB 重置/总数缩水：请求页已越界，回落到最后一页（不渲染「第 2/1 页」）。
+        // 可达路径：demo.py 每次启动 unlink 库 → 停在第 2 页重启后点「重试」。
+        // 兜底与 Trace 列表同款（Trace.tsx 同位置同写法，评审 P2-1）。
+        const totalPages = totalPagesOf(body.total, body.page_size);
+        if (body.page > totalPages) {
+          setPage(totalPages);
+          return;
+        }
         setState({
           kind: "ready",
           items: body.items,

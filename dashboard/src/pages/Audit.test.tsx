@@ -151,6 +151,13 @@ describe("审计表格渲染（M2-07 #22）", () => {
 
     // 文案逐徽标核对：绝不出现「警告」（S2）
     expect(screen.queryByText(/警告/)).toBeNull();
+
+    // 色档逐徽标钉住（评审 P3-3 / MUT-E：琥珀改灰曾全绿——分档对、色名错抓不到）
+    // data-tone 由 TraceRow 的 Badge 统一落下，三信号色语义见 CONTEXT.md 看板术语
+    expect(within(blockRow).getByText("拦截")).toHaveAttribute("data-tone", "block");
+    expect(within(observeRow).getByText("观察期命中")).toHaveAttribute("data-tone", "observe");
+    expect(within(observeRow).getByText("放行")).toHaveAttribute("data-tone", "allow");
+    expect(within(allowRow).getByText("放行")).toHaveAttribute("data-tone", "allow");
   });
 
   it("payload_truncated=1 → 显示截断标记；=0 → 不显示", async () => {
@@ -325,5 +332,49 @@ describe("分页与筛选联动（满页 QA 的自动化面）", () => {
     expect(last).toContain("action=audit");
     expect(screen.getByRole("navigation", { name: /审计列表分页/ })).toHaveTextContent("第 1/1 页");
     expect(screen.queryByRole("button", { name: /tool_25/ })).toBeNull();
+  });
+
+  it("总数缩水后请求页越界 → 回落到最后一页，不渲染「第 2/1 页」（评审 P2-1）", async () => {
+    // 场景复刻评审探针：第 1 页 25 条 → 翻第 2 页时 DB 已被重置（demo.py 启动
+    // 即 unlink）→ 服务端只剩 3 条。响应照契约原样回显 page=2、total=3。
+    const rows = manyRows(25);
+    let dbReset = false; // 翻页前翻真，模拟「停在页面上的同时库被换掉」
+    const calls: string[] = [];
+    const fn = vi.fn().mockImplementation((url: string) => {
+      calls.push(url);
+      const m = /^\/api\/audits\?page=(\d+)&page_size=(\d+)(?:&(.+))?$/.exec(url);
+      if (!m) return Promise.reject(new Error(`unexpected url: ${url}`));
+      const page = Number(m[1]);
+      if (dbReset) {
+        // 重置后的库只有 3 行；服务端不拦截越界页，原样回 page=2 + total=3
+        const shrunk = [3, 2, 1].map((id) => wireRow({ id, tool: `tool_${id}` }));
+        const slice = shrunk.slice((page - 1) * 20, page * 20);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(`{"items":[${slice.join(",")}],"page":${page},"page_size":20,"total":3}`),
+        });
+      }
+      const slice = rows.slice((page - 1) * 20, page * 20);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(`{"items":[${slice.join(",")}],"page":${page},"page_size":20,"total":25}`),
+      });
+    });
+    vi.stubGlobal("fetch", fn);
+
+    renderPage();
+    await screen.findByRole("button", { name: /tool_25/ });
+    dbReset = true; // 此刻 demo 重启、库清空重跑，只剩 3 行审计
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    // 缩水到 3 条后请求页 2 已越界：必须回落到最后一页（第 1 页）重新取数，
+    // 而不是照搬响应里的 page=2 渲染出「共 3 条 · 第 2/1 页」
+    await screen.findByRole("button", { name: /tool_3/ });
+    expect(screen.getByRole("navigation", { name: /审计列表分页/ })).toHaveTextContent("共 3 条 · 第 1/1 页");
+    expect(screen.queryByRole("button", { name: /tool_25/ })).toBeNull();
+    // 回落是重新发起了 page=1 请求（不是拿越界响应直接渲染）
+    expect(calls[calls.length - 1]).toContain("page=1");
   });
 });
