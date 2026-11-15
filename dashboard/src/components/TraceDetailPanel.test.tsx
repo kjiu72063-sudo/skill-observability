@@ -58,8 +58,36 @@ const DEMO_SPANS_JSON = `
    "skill_observability.block_reason":"命中规则 r1-pii-id-card（客户身份证号外泄）：110101199003071234"},
  "events":[],"agent_id":"customer-service"}`;
 
-function stubDetail(spansJson: string, traceId = "4bf92f3577b34da6a3ce929d0e0e4736") {
-  const fetchMock = vi.fn().mockImplementation(() => {
+function stubDetail(
+  spansJson: string,
+  traceId = "4bf92f3577b34da6a3ce929d0e0e4736",
+  auditSpanId: string | null = "tool1"
+) {
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (url.startsWith("/api/audits?")) {
+      const items = auditSpanId
+        ? [{
+            id: 3,
+            trace_id: traceId,
+            span_id: auditSpanId,
+            agent_id: "customer-service",
+            tool_name: "query_user_db",
+            verdict: "allow",
+            rule_id: null,
+            rule_name: null,
+            action: null,
+            reason: null,
+            payload: { query: "demo" },
+            payload_truncated: false,
+            created_at_unix_nano: "1",
+          }]
+        : [];
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ items, page: 1, page_size: 100, total: items.length })),
+      });
+    }
     const body = `{"trace_id":"${traceId}","spans":[${spansJson}]}`;
     return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(body) });
   });
@@ -297,6 +325,15 @@ describe("span 详情卡（M2-05 #20）", () => {
     expect(screen.queryByRole("button", { name: "查看审计行" })).toBeNull();
 
     fireEvent.click(screen.getAllByRole("button", { name: /^span chat gpt-4o-mini/ })[0]);
+    expect(screen.queryByRole("button", { name: "查看审计行" })).toBeNull();
+  });
+
+  it("M8：execute_tool 无精确审计行时不渲染反链并给出反馈", async () => {
+    stubDetail(DEMO_SPANS_JSON, "4bf92f3577b34da6a3ce929d0e0e4736", null);
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /^span execute_tool query_user_db/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前 span 没有对应的审计行");
     expect(screen.queryByRole("button", { name: "查看审计行" })).toBeNull();
   });
 });

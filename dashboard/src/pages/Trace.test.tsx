@@ -189,8 +189,8 @@ describe("Trace 分页（M2-04 #19）", () => {
   it("第二页可翻：请求 page=2 并渲染该页数据，翻页清空选中", async () => {
     const fetchMock = stubPagedApi(
       {
-        1: [wireItemJson({ trace_id: "p1", name: "trace page1" })],
-        2: [wireItemJson({ trace_id: "p2", name: "trace page2", blocked: false })],
+        1: [wireItemJson({ trace_id: "11111111111111111111111111111111", name: "trace page1" })],
+        2: [wireItemJson({ trace_id: "22222222222222222222222222222222", name: "trace page2", blocked: false })],
       },
       21
     );
@@ -207,6 +207,39 @@ describe("Trace 分页（M2-04 #19）", () => {
     // 翻页后选中清空（跨页残留选中会让右栏与列表不同页）
     expect(screen.queryByText("SPAN 树")).toBeNull();
     expect(screen.getByText(/从左侧选择一条 trace/)).toBeInTheDocument();
+  });
+
+  it("浏览器 back/forward 按 URL 恢复同一挂载页的 trace 选中态", async () => {
+    const traceA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const traceB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    window.history.replaceState({}, "", "#/trace");
+    stubPagedApi({
+      1: [
+        wireItemJson({ trace_id: traceA, name: "trace history A" }),
+        wireItemJson({ trace_id: traceB, name: "trace history B", blocked: false }),
+      ],
+    }, 2);
+    renderPage();
+
+    const rowA = await screen.findByRole("button", { name: /trace history A/ });
+    const rowB = screen.getByRole("button", { name: /trace history B/ });
+    fireEvent.click(rowA);
+    await waitFor(() => expect(rowA).toHaveAttribute("aria-pressed", "true"));
+    expect(window.location.hash).toContain(`trace=${traceA}`);
+
+    fireEvent.click(rowB);
+    await waitFor(() => expect(rowB).toHaveAttribute("aria-pressed", "true"));
+    expect(window.location.hash).toContain(`trace=${traceB}`);
+
+    window.history.back();
+    await waitFor(() => expect(rowA).toHaveAttribute("aria-pressed", "true"));
+    expect(rowB).toHaveAttribute("aria-pressed", "false");
+    expect(window.location.hash).toContain(`trace=${traceA}`);
+
+    window.history.forward();
+    await waitFor(() => expect(rowB).toHaveAttribute("aria-pressed", "true"));
+    expect(rowA).toHaveAttribute("aria-pressed", "false");
+    expect(window.location.hash).toContain(`trace=${traceB}`);
   });
 
   it("第一页「上一页」disabled；末页「下一页」disabled", async () => {

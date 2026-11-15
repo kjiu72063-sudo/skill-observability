@@ -58,9 +58,8 @@ export default function TracePage() {
   // 重试同一页：page 不变也要重新触发 effect
   const [reloadTick, setReloadTick] = useState(0);
   const [state, setState] = useState<ListState>({ kind: "loading" });
-  const [selectedId, setSelectedId] = useState<string | null>(() =>
-    parseTraceLocation(location.search)
-  );
+  // Router location 是选中 trace 的唯一来源，因此刷新与 back/forward 都能恢复同一详情。
+  const selectedId = parseTraceLocation(location.search);
   // 实时增量（第 1 页合并用）：每来一条 SSE 事件 +1 版本，列表/徽标随之重算
   const liveRows = useLiveTraceRows();
   // 重连成功 = 浏览器自动重连上来了。它**不会**带 Last-Event-ID（实测重连请求头
@@ -124,13 +123,11 @@ export default function TracePage() {
     const totalPages = state.kind === "ready" ? totalPagesOf(total, state.pageSize) : 1;
     if (!isPageChangeAllowed(next, page, totalPages)) return;
     // 翻页清空选中：跨页残留的选中行会让右栏与列表不同页，语义错乱（详情联动归 #20）
-    setSelectedId(null);
     navigate(traceBaseLocation());
     setPage(next);
   };
 
   const handleSelect = (traceId: string) => {
-    setSelectedId(traceId);
     navigate(traceLocation(traceId));
   };
 

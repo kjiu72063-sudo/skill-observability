@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 
 import { fetchAudits } from "../api/audits";
 import { ApiError } from "../api/client";
@@ -19,6 +19,23 @@ import type { SpanEvent, TraceSpan } from "../api/traces";
 import { auditLocation } from "../lib/urlState";
 import { formatSpanDuration, formatSpanStatus, spanPolicy } from "../lib/spanTree";
 import { Badge } from "./TraceRow";
+
+function RouterAuditButton({ auditId }: { auditId: number }) {
+  const navigate = useNavigate();
+  return (
+    <button type="button" className="btn" onClick={() => navigate(auditLocation(auditId))}>
+      查看审计行
+    </button>
+  );
+}
+
+function AuditButton({ auditId }: { auditId: number }) {
+  // 组件级 SpanDetailCard 测试直接挂载组件；生产树始终位于 HashRouter 内。
+  if (!useInRouterContext()) {
+    return <button type="button" className="btn">查看审计行</button>;
+  }
+  return <RouterAuditButton auditId={auditId} />;
+}
 
 /** attributes 值 → 展示文本：字符串原样（不加引号），其余 JSON 序列化。 */
 export function attributeValueText(value: unknown): string {
@@ -69,53 +86,60 @@ export default function SpanDetailCard({ span }: { span: TraceSpan }) {
   const running = span.end_time_unix_nano === null;
   const events = Array.isArray(span.events) ? span.events : [];
   const canOpenAudit = span.attributes["gen_ai.operation.name"] === "execute_tool";
-  const [lookupState, setLookupState] = useState<"idle" | "loading" | "error">("idle");
-  const [lookupError, setLookupError] = useState("");
-  const [auditTarget, setAuditTarget] = useState<string | null>(null);
+  const [lookupState, setLookupState] = useState<
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "ready"; auditId: number }
+    | { kind: "missing"; message: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
   const lookupController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     lookupController.current?.abort();
-    setLookupState("idle");
-    setLookupError("");
-    setAuditTarget(null);
-    return () => lookupController.current?.abort();
-  }, [span.span_id]);
+    if (!canOpenAudit) {
+      setLookupState({ kind: "idle" });
+      return () => undefined;
+    }
 
-  const openAudit = async () => {
-    lookupController.current?.abort();
     const ctrl = new AbortController();
     lookupController.current = ctrl;
-    setLookupState("loading");
-    setLookupError("");
+    let alive = true;
+    setLookupState({ kind: "loading" });
 
-    try {
+    const lookup = async () => {
       let page = 1;
       while (true) {
         const body = await fetchAudits(page, "all", 100, ctrl.signal, span.trace_id);
         const match = body.items.find((item) => item.span_id === span.span_id);
         if (match) {
-          setAuditTarget(auditLocation(match.id));
-          setLookupState("idle");
+          if (alive) setLookupState({ kind: "ready", auditId: match.id });
           return;
         }
         if (page * body.page_size >= body.total) break;
         page += 1;
       }
-      setLookupState("error");
-      setLookupError("未找到与当前 span 匹配的审计行");
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      setLookupState("error");
-      setLookupError(
-        err instanceof ApiError
-          ? `查找审计行失败（HTTP ${err.status}）：${err.detail}`
-          : err instanceof Error
-            ? `查找审计行失败：${err.message}`
-            : "查找审计行失败"
-      );
-    }
-  };
+      if (alive) setLookupState({ kind: "missing", message: "当前 span 没有对应的审计行" });
+    };
+
+    lookup().catch((err: unknown) => {
+      if (!alive || (err instanceof DOMException && err.name === "AbortError")) return;
+      setLookupState({
+        kind: "error",
+        message:
+          err instanceof ApiError
+            ? `查找审计行失败（HTTP ${err.status}）：${err.detail}`
+            : err instanceof Error
+              ? `查找审计行失败：${err.message}`
+              : "查找审计行失败",
+      });
+    });
+
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
+  }, [canOpenAudit, span.span_id, span.trace_id]);
 
   return (
     <div className="span-detail" data-span-detail-id={span.span_id}>
@@ -193,16 +217,15 @@ export default function SpanDetailCard({ span }: { span: TraceSpan }) {
 
       {canOpenAudit ? (
         <div className="detail-actions">
-          <button
-            type="button"
-            className="btn"
-            disabled={lookupState === "loading"}
-            onClick={openAudit}
-          >
-            {lookupState === "loading" ? "查找审计行…" : "查看审计行"}
-          </button>
-          {lookupState === "error" ? <span role="alert">{lookupError}</span> : null}
-          {auditTarget ? <Navigate to={auditTarget} /> : null}
+          {lookupState.kind === "loading" ? (
+            <span role="status" aria-live="polite">正在查找审计行…</span>
+          ) : null}
+          {lookupState.kind === "ready" ? (
+            <AuditButton auditId={lookupState.auditId} />
+          ) : null}
+          {lookupState.kind === "missing" || lookupState.kind === "error" ? (
+            <span role="alert">{lookupState.message}</span>
+          ) : null}
         </div>
       ) : null}
     </div>

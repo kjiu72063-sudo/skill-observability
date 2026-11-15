@@ -502,7 +502,25 @@ class TestAuditActionFilter:
 class TestAuditTraceFilter:
     """M2-08：trace_id 精确过滤，并与既有过滤和分页语义按 AND 组合。"""
 
-    def test_trace_id_returns_the_three_rows_from_the_m1_run(self, run, client):
+    @staticmethod
+    def _insert_other_trace_audit(deps):
+        deps.storage.insert_audit(
+            trace_id="c" * 32,
+            span_id="d" * 16,
+            agent_id="customer-service",
+            tool_name="query_contact_by_phone",
+            verdict="allow",
+            rule_id="r1b-pii-phone-audit",
+            rule_name="客户手机号外泄（观察期）",
+            action="audit",
+            reason="对照 trace",
+            payload_json='{"phone":"13800000000"}',
+            payload_truncated=False,
+            created_at_unix_nano=time.time_ns(),
+        )
+
+    def test_trace_id_returns_the_three_rows_from_the_m1_run(self, run, client, deps):
+        self._insert_other_trace_audit(deps)
         resp = client.get("/api/audits", params={"trace_id": run["trace_id"], "page_size": 100})
         assert resp.status_code == 200
         body = resp.json()
@@ -510,7 +528,8 @@ class TestAuditTraceFilter:
         assert len(body["items"]) == 3
         assert all(item["trace_id"] == run["trace_id"] for item in body["items"])
 
-    def test_trace_id_combines_with_action_verdict_and_preserves_pagination(self, run, client):
+    def test_trace_id_combines_with_action_verdict_and_preserves_pagination(self, run, client, deps):
+        self._insert_other_trace_audit(deps)
         observed = client.get(
             "/api/audits",
             params={"trace_id": run["trace_id"], "action": "audit", "verdict": "allow"},
@@ -529,7 +548,8 @@ class TestAuditTraceFilter:
         assert len(body["items"]) == 1
         assert body["items"][0]["verdict"] == "block"
 
-    def test_unknown_trace_id_returns_empty_page(self, client):
+    def test_unknown_trace_id_returns_empty_page(self, client, deps):
+        self._insert_other_trace_audit(deps)
         resp = client.get("/api/audits", params={"trace_id": "f" * 32})
         assert resp.status_code == 200
         assert resp.json() == {"items": [], "page": 1, "page_size": 20, "total": 0}
