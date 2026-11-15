@@ -12,8 +12,8 @@
   ③ 同步调 engine.evaluate(...)
   ④ 写审计记录（无论 verdict；payload 快照 + trace_id/span_id）
   ⑤ allow → 执行 fn()；block → 不执行
-  ⑥ span UPDATE：成功 UNSET；fn 异常 → ERROR + exception 事件 + error.type=类名；
-     block → ERROR + error.type="policy.block" + skill_observability.*
+  ⑥ span UPDATE：成功 UNSET；fn 异常 → ERROR + exception 事件 + error type=类名；
+     block → ERROR + policy block 属性
   ⑦ event_log(span.end) → 推 SSE
   ⑧ allow → 返回结果（fn 异常原样重抛）；block → 抛 PolicyBlocked
 
@@ -35,6 +35,16 @@ from typing import Any, Callable
 from skill_observability.engine import EvalContext, PolicyEngine, Verdict
 from skill_observability.sse import EventHub
 from skill_observability.db import Storage
+from skill_observability.constants import (
+    ATTR_BLOCK_REASON,
+    ATTR_ERROR_TYPE,
+    ATTR_MATCHED_RULE,
+    ATTR_VERDICT,
+    CURRENT_SPAN_CONTEXT,
+    ERROR_POLICY_BLOCK,
+    VERDICT_ALLOW,
+    VERDICT_BLOCK,
+)
 
 # 审计 payload 快照上限（policy §3.1：8KB，超出截断并置 payload_truncated=1）
 _AUDIT_PAYLOAD_CAP_BYTES = 8 * 1024
@@ -61,7 +71,7 @@ class _SpanContext:
 
 
 _current_span: ContextVar[_SpanContext | None] = ContextVar(
-    "skill_observability.current_span", default=None
+    CURRENT_SPAN_CONTEXT, default=None
 )
 
 
@@ -260,7 +270,7 @@ class ObservabilitySdk:
             try:
                 result = fn()
             except Exception as e:
-                # ⑥ fn 异常 → ERROR + exception 事件 + error.type=类名
+                # ⑥ fn 异常 → ERROR + exception 事件 + 异常类型
                 events = [{
                     "name": "exception",
                     "timestamp": self._clock(),
@@ -270,21 +280,21 @@ class ObservabilitySdk:
                         "exception.stacktrace": traceback.format_exc(),
                     },
                 }]
-                final_attrs = {**attributes, "error.type": type(e).__name__}
+                final_attrs = {**attributes, ATTR_ERROR_TYPE: type(e).__name__}
                 self._finish_span(span_id, start_ns, "ERROR", str(e),
                                   final_attrs, events)
                 raise  # ⑧ fn 异常原样重抛
             else:
                 # ⑥ 成功保持 UNSET（不写 OK）。verdict 属性写入时机（trace 契约 §3.4 /
                 # policy 契约 §5）：block 必写（见 _finish_blocked）；allow 仅**观察期命中**
-                # 时写 verdict/matched_rule 两键（无 error.type / block_reason）；
+                # 时写 verdict/matched_rule 两键（无错误类型 / block reason）；
                 # 未命中规则的成功调用不写。
                 final_attrs = attributes
                 if verdict.matched_rule is not None:
                     final_attrs = {
                         **attributes,
-                        "skill_observability.verdict": "allow",
-                        "skill_observability.matched_rule": verdict.matched_rule,
+                        ATTR_VERDICT: VERDICT_ALLOW,
+                        ATTR_MATCHED_RULE: verdict.matched_rule,
                     }
                 self._finish_span(span_id, start_ns, "UNSET", None,
                                   final_attrs, [])
@@ -318,7 +328,7 @@ class ObservabilitySdk:
                     "exception.stacktrace": traceback.format_exc(),
                 },
             }]
-            final_attrs = {**handle._attributes, "error.type": type(e).__name__}
+            final_attrs = {**handle._attributes, ATTR_ERROR_TYPE: type(e).__name__}
             self._finish_span(span_id, start_ns, "ERROR", str(e),
                               final_attrs, events)
             raise
@@ -354,13 +364,13 @@ class ObservabilitySdk:
 
     def _finish_blocked(self, span_id: str, base_attrs: dict,
                         verdict: Verdict, start_ns: int) -> None:
-        # ⑥ block → ERROR + error.type="policy.block" + skill_observability.*
+        # ⑥ block → ERROR + policy block attributes
         final_attrs = {
             **base_attrs,
-            "error.type": "policy.block",
-            "skill_observability.verdict": "block",
-            "skill_observability.matched_rule": verdict.matched_rule,
-            "skill_observability.block_reason": verdict.reason,
+            ATTR_ERROR_TYPE: ERROR_POLICY_BLOCK,
+            ATTR_VERDICT: VERDICT_BLOCK,
+            ATTR_MATCHED_RULE: verdict.matched_rule,
+            ATTR_BLOCK_REASON: verdict.reason,
         }
         self._finish_span(span_id, start_ns, "ERROR", verdict.reason, final_attrs, [])
 

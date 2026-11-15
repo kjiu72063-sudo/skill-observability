@@ -15,7 +15,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from typing import Any
+
+from skill_observability.constants import ATTR_VERDICT
 
 # ---------------------------------------------------------------- DDL（契约原文）
 
@@ -180,6 +183,125 @@ class Storage:
             })
         return out
 
+    def list_rules(self) -> list[dict]:
+        """Return API rule objects in the contract order."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM rule ORDER BY priority ASC, id ASC"
+            ).fetchall()
+        return [self._rule_row_to_dict(row, stringify_timestamps=True) for row in rows]
+
+    def create_rule(self, rule: dict) -> tuple[dict, int]:
+        """Insert a rule and bump its version in one transaction."""
+        now = time.time_ns()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN")
+                self._insert_rule_locked(rule, now)
+                version = self._bump_rules_version_locked()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            row = self._conn.execute(
+                "SELECT * FROM rule WHERE id = ?", (rule["id"],)
+            ).fetchone()
+        return self._rule_row_to_dict(row, stringify_timestamps=True), version
+
+    def replace_rule(self, rule_id: str, rule: dict) -> tuple[dict | None, int | None]:
+        """Replace a rule and bump its version in one transaction."""
+        now = time.time_ns()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN")
+                existing = self._conn.execute(
+                    "SELECT created_at_unix_nano FROM rule WHERE id = ?", (rule_id,)
+                ).fetchone()
+                if existing is None:
+                    self._conn.rollback()
+                    return None, None
+                self._conn.execute("DELETE FROM rule WHERE id = ?", (rule_id,))
+                self._insert_rule_locked(rule, now, created_at=existing["created_at_unix_nano"])
+                version = self._bump_rules_version_locked()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            row = self._conn.execute(
+                "SELECT * FROM rule WHERE id = ?", (rule_id,)
+            ).fetchone()
+        return self._rule_row_to_dict(row, stringify_timestamps=True), version
+
+    def delete_rule(self, rule_id: str) -> int | None:
+        """Hard-delete a rule and bump its version in one transaction."""
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN")
+                deleted = self._conn.execute(
+                    "DELETE FROM rule WHERE id = ?", (rule_id,)
+                ).rowcount
+                if deleted == 0:
+                    self._conn.rollback()
+                    return None
+                version = self._bump_rules_version_locked()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return version
+
+    def _insert_rule_locked(
+        self, rule: dict, now: int, created_at: int | None = None
+    ) -> None:
+        created_at = now if created_at is None else created_at
+        self._conn.execute(
+            "INSERT INTO rule (id, name, category, action, enabled, priority,"
+            " agent_ids, tool_names, args_regex, description,"
+            " created_at_unix_nano, updated_at_unix_nano)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                rule["id"], rule["name"], rule["category"], rule["action"],
+                1 if rule["enabled"] else 0, rule["priority"],
+                _json_dumps(rule["agent_ids"]) if rule["agent_ids"] is not None else None,
+                _json_dumps(rule["tool_names"]) if rule["tool_names"] is not None else None,
+                _json_dumps(rule["args_regex"]) if rule["args_regex"] is not None else None,
+                rule["description"], created_at, now,
+            ),
+        )
+
+    def _bump_rules_version_locked(self) -> int:
+        current = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'rules_version'"
+        ).fetchone()
+        version = int(current["value"]) + 1 if current else 1
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('rules_version', ?)",
+            (str(version),),
+        )
+        return version
+
+    @staticmethod
+    def _rule_row_to_dict(row: sqlite3.Row, stringify_timestamps: bool = False) -> dict:
+        created = row["created_at_unix_nano"]
+        updated = row["updated_at_unix_nano"]
+        if stringify_timestamps:
+            created = str(created)
+            updated = str(updated)
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "category": row["category"],
+            "action": row["action"],
+            "enabled": bool(row["enabled"]),
+            "priority": row["priority"],
+            "agent_ids": json.loads(row["agent_ids"]) if row["agent_ids"] else None,
+            "tool_names": json.loads(row["tool_names"]) if row["tool_names"] else None,
+            "args_regex": json.loads(row["args_regex"]) if row["args_regex"] else None,
+            "description": row["description"],
+            "created_at_unix_nano": created,
+            "updated_at_unix_nano": updated,
+        }
+
     # ---------------------------------------------------------------- SDK 写路径（唯一写入者）
 
     def start_span(
@@ -281,7 +403,7 @@ class Storage:
                 " s.end_time_unix_nano, s.status_code,"
                 " (SELECT COUNT(*) FROM span c WHERE c.trace_id = s.trace_id) AS span_count,"
                 " EXISTS(SELECT 1 FROM span b WHERE b.trace_id = s.trace_id"
-                "        AND json_extract(b.attributes, '$.\"skill_observability.verdict\"')"
+                f"        AND json_extract(b.attributes, '$.\"{ATTR_VERDICT}\"')"
                 "            = 'block')"
                 "   AS blocked"
                 f" FROM span s WHERE {where_sql}"

@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import httpx
 
+from skill_observability.constants import (
+    ATTR_ERROR_TYPE,
+    ATTR_MATCHED_RULE,
+    ATTR_VERDICT,
+    ERROR_POLICY_BLOCK,
+    VERDICT_ALLOW,
+)
+
 _BASE_INDENT = "  "
 
 
@@ -22,20 +30,20 @@ def _fmt_span_line(span: dict, depth: int) -> str:
     )
     attrs = span.get("attributes") or {}
     if span["status_code"] == "ERROR":
-        if attrs.get("error.type") == "policy.block":
+        if attrs.get(ATTR_ERROR_TYPE) == ERROR_POLICY_BLOCK:
             # #10 人验2：block 节点带 ERROR + 命中规则/理由标记（status_message 即引擎 reason）
             line += (
-                f" ERROR（policy.block · 规则 {attrs.get('skill_observability.matched_rule')}）"
+                f" ERROR（{ERROR_POLICY_BLOCK} · 规则 {attrs.get(ATTR_MATCHED_RULE)}）"
                 f"：{span.get('status_message') or ''}"
             )
         else:
             line += f" ERROR: {span.get('status_message') or ''}"
-    elif attrs.get("skill_observability.verdict") == "allow":
+    elif attrs.get(ATTR_VERDICT) == VERDICT_ALLOW:
         # 观察期命中（audit 规则）：verdict 仍 allow、status UNSET，仅标记（#13 端到端首验
         # f440b24 的 span 标记补写——观察期分支自此不再永假）
         line += (
             f"（观察期 verdict=allow"
-            f" · 规则 {attrs.get('skill_observability.matched_rule')}）"
+            f" · 规则 {attrs.get(ATTR_MATCHED_RULE)}）"
         )
     return line
 

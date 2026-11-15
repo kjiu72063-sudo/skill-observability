@@ -2,6 +2,12 @@
 
 from skill_observability.api.audits import build_audits_router
 from skill_observability.api.events import build_events_router
+from skill_observability.api.rules import build_rules_router
 from skill_observability.api.traces import build_traces_router
 
-__all__ = ["build_audits_router", "build_events_router", "build_traces_router"]
+__all__ = [
+    "build_audits_router",
+    "build_events_router",
+    "build_rules_router",
+    "build_traces_router",
+]

@@ -1,10 +1,15 @@
-"""FastAPI 应用组装：查询 API×3 + SSE 推送（M1 无规则 CRUD——规则管理归 M2）。"""
+"""FastAPI 应用组装：查询 API、规则管理 API 与 SSE 推送。"""
 
 from __future__ import annotations
 
 from fastapi import FastAPI
 
-from skill_observability.api import build_audits_router, build_events_router, build_traces_router
+from skill_observability.api import (
+    build_audits_router,
+    build_events_router,
+    build_rules_router,
+    build_traces_router,
+)
 from skill_observability.db import Storage
 from skill_observability.engine import PolicyEngine
 from skill_observability.sse import EventHub
@@ -18,10 +23,11 @@ def create_app(storage: Storage, engine: PolicyEngine, hub: EventHub) -> FastAPI
     """
     app = FastAPI(
         title="skill-observability",
-        description="Agent Skill 合规可观测平台（M1 垂直切片）",
+        description="Agent Skill 合规可观测平台",
         version="0.1.0",
     )
     app.include_router(build_traces_router(storage))
     app.include_router(build_audits_router(storage))
+    app.include_router(build_rules_router(storage, engine))
     app.include_router(build_events_router(storage, hub))
     return app
