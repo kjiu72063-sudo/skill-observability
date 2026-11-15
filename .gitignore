@@ -18,3 +18,6 @@ _tmp_proto_serve/
 
 # TS 增量构建缓存
 dashboard/*.tsbuildinfo
+
+# herdr-operator 提示词传输通道（操作员/导师往返用，不入库）
+prompts/
