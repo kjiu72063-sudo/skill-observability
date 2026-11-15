@@ -76,6 +76,20 @@
   flex-direction: column;
 }
 
+.audit-entry {
+  border-radius: var(--r-md);
+}
+
+.audit-entry.selected {
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+}
+
+.audit-entry.selected .audit-row {
+  border-color: transparent;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+}
+
 /* ---- 表头 / 行网格（原型 .audit-head / .audit-row）----
  * 六列：# / 时间 / 工具 / verdict / 命中规则+理由 / 选中槽
  * 时间列 132px：`MM-DD HH:MM:SS.mmm` 实测 124px 宽（满页 QA：112px 时溢出贴列）。 */
@@ -119,6 +133,49 @@
 .audit-row.selected {
   background: var(--bg2);
   border-color: var(--line2);
+}
+
+.audit-expanded {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 0 16px 14px 84px;
+}
+
+.audit-payload {
+  min-width: 0;
+  flex: 1;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.audit-payload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font: 10px var(--font-m);
+  color: var(--ink4);
+}
+
+.audit-payload-truncated {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.audit-payload pre {
+  margin: 0;
+  color: var(--ink3s);
+  font: 11.5px/1.65 var(--font-m);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.audit-trace-link {
+  flex: 0 0 auto;
+  margin-top: 10px;
+  white-space: nowrap;
 }
 
 .audit-row .aid {
@@ -210,5 +267,10 @@
 
   .audit-row .arule {
     grid-column: 1 / -1;
+  }
+
+  .audit-expanded {
+    flex-direction: column;
+    padding: 0 16px 14px;
   }
 }

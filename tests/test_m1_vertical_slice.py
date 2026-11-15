@@ -494,3 +494,42 @@ class TestAuditActionFilter:
         page2 = client.get("/api/audits", params={"action": "audit", "page_size": 2, "page": 2}).json()
         assert len(page2["items"]) == 1 and page2["total"] == 3  # total 是过滤后总数，不是全表
         assert all(a["action"] == "audit" and a["verdict"] == "allow" for a in page2["items"])
+
+
+# ---------------------------------------------------------------- M2-08（#23）：audits?trace_id= 精确定位
+
+
+class TestAuditTraceFilter:
+    """M2-08：trace_id 精确过滤，并与既有过滤和分页语义按 AND 组合。"""
+
+    def test_trace_id_returns_the_three_rows_from_the_m1_run(self, run, client):
+        resp = client.get("/api/audits", params={"trace_id": run["trace_id"], "page_size": 100})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 3
+        assert len(body["items"]) == 3
+        assert all(item["trace_id"] == run["trace_id"] for item in body["items"])
+
+    def test_trace_id_combines_with_action_verdict_and_preserves_pagination(self, run, client):
+        observed = client.get(
+            "/api/audits",
+            params={"trace_id": run["trace_id"], "action": "audit", "verdict": "allow"},
+        )
+        assert observed.status_code == 200
+        assert observed.json()["total"] == 1
+        assert observed.json()["items"][0]["action"] == "audit"
+
+        blocked = client.get(
+            "/api/audits",
+            params={"trace_id": run["trace_id"], "action": "block", "page": 1, "page_size": 1},
+        )
+        body = blocked.json()
+        assert blocked.status_code == 200
+        assert body["page"] == 1 and body["page_size"] == 1 and body["total"] == 1
+        assert len(body["items"]) == 1
+        assert body["items"][0]["verdict"] == "block"
+
+    def test_unknown_trace_id_returns_empty_page(self, client):
+        resp = client.get("/api/audits", params={"trace_id": "f" * 32})
+        assert resp.status_code == 200
+        assert resp.json() == {"items": [], "page": 1, "page_size": 20, "total": 0}

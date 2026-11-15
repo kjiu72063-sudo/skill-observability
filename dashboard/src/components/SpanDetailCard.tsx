@@ -7,12 +7,16 @@
  * - M5：events 为空数组时**不渲染** events 卡（不是渲染空状态）。
  * - 值一律按原样 JSON 序列化后展示（票面：不做字段挑选隐藏），长值靠
  *   `.attr .v` 的 overflow-wrap:anywhere 断行（M2 注意事项，不用 break-all）。
- * - M8 反链：本票只放禁用态占位按钮，跳转在 M2-08 接通。
- *
- * 纯展示：span 由父层传（已选中的那个），无取数逻辑。
+ * - M8 反链：仅 execute_tool span 按 trace_id 拉审计，再按 span_id 精确定位。
  */
 
+import { useEffect, useRef, useState } from "react";
+import { Navigate } from "react-router-dom";
+
+import { fetchAudits } from "../api/audits";
+import { ApiError } from "../api/client";
 import type { SpanEvent, TraceSpan } from "../api/traces";
+import { auditLocation } from "../lib/urlState";
 import { formatSpanDuration, formatSpanStatus, spanPolicy } from "../lib/spanTree";
 import { Badge } from "./TraceRow";
 
@@ -64,6 +68,54 @@ export default function SpanDetailCard({ span }: { span: TraceSpan }) {
   const errored = span.status_code === "ERROR";
   const running = span.end_time_unix_nano === null;
   const events = Array.isArray(span.events) ? span.events : [];
+  const canOpenAudit = span.attributes["gen_ai.operation.name"] === "execute_tool";
+  const [lookupState, setLookupState] = useState<"idle" | "loading" | "error">("idle");
+  const [lookupError, setLookupError] = useState("");
+  const [auditTarget, setAuditTarget] = useState<string | null>(null);
+  const lookupController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    lookupController.current?.abort();
+    setLookupState("idle");
+    setLookupError("");
+    setAuditTarget(null);
+    return () => lookupController.current?.abort();
+  }, [span.span_id]);
+
+  const openAudit = async () => {
+    lookupController.current?.abort();
+    const ctrl = new AbortController();
+    lookupController.current = ctrl;
+    setLookupState("loading");
+    setLookupError("");
+
+    try {
+      let page = 1;
+      while (true) {
+        const body = await fetchAudits(page, "all", 100, ctrl.signal, span.trace_id);
+        const match = body.items.find((item) => item.span_id === span.span_id);
+        if (match) {
+          setAuditTarget(auditLocation(match.id));
+          setLookupState("idle");
+          return;
+        }
+        if (page * body.page_size >= body.total) break;
+        page += 1;
+      }
+      setLookupState("error");
+      setLookupError("未找到与当前 span 匹配的审计行");
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setLookupState("error");
+      setLookupError(
+        err instanceof ApiError
+          ? `查找审计行失败（HTTP ${err.status}）：${err.detail}`
+          : err instanceof Error
+            ? `查找审计行失败：${err.message}`
+            : "查找审计行失败"
+      );
+    }
+  };
 
   return (
     <div className="span-detail" data-span-detail-id={span.span_id}>
@@ -139,16 +191,20 @@ export default function SpanDetailCard({ span }: { span: TraceSpan }) {
         </div>
       ) : null}
 
-      <div className="detail-actions">
-        <button
-          type="button"
-          className="btn"
-          disabled
-          title="反链闭环在 M2-08 接通（审计区块页此时已存在）"
-        >
-          查看审计行
-        </button>
-      </div>
+      {canOpenAudit ? (
+        <div className="detail-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={lookupState === "loading"}
+            onClick={openAudit}
+          >
+            {lookupState === "loading" ? "查找审计行…" : "查看审计行"}
+          </button>
+          {lookupState === "error" ? <span role="alert">{lookupError}</span> : null}
+          {auditTarget ? <Navigate to={auditTarget} /> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

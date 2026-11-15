@@ -319,6 +319,7 @@ class Storage:
         self, verdict: str | None, agent_id: str | None, tool_name: str | None,
         rule_id: str | None, from_ns: int | None, to_ns: int | None,
         page: int, page_size: int, action: str | None = None,
+        trace_id: str | None = None,
     ) -> tuple[list[dict], int]:
         where: list[str] = []
         params: list[Any] = []
@@ -348,6 +349,9 @@ class Storage:
         if to_ns is not None:
             where.append("created_at_unix_nano <= ?")
             params.append(to_ns)
+        if trace_id is not None:
+            where.append("trace_id = ?")
+            params.append(trace_id)
         where_sql = " AND ".join(where) if where else "1=1"
         with self._lock:
             total = self._conn.execute(

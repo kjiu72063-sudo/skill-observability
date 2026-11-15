@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   fetchTraces,
@@ -32,6 +33,7 @@ import {
   useTraceStreamResyncCount,
   useTraceStreamStatus,
 } from "../lib/traceStore";
+import { parseTraceLocation, traceBaseLocation, traceLocation } from "../lib/urlState";
 import TraceDetailPanel from "../components/TraceDetailPanel";
 import TracePager, { totalPagesOf } from "../components/TracePager";
 import TraceRow, { TraceListEmpty } from "../components/TraceRow";
@@ -48,13 +50,17 @@ export function isPageChangeAllowed(next: number, current: number, totalPages: n
 }
 
 export default function TracePage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   // 受控页码：翻页只改这里，越界/同页由 handlePageChange 挡在事件层，
   // 响应里的 total 缩水由 effect 里的「回落到最后一页」兜底。
   const [page, setPage] = useState(1);
   // 重试同一页：page 不变也要重新触发 effect
   const [reloadTick, setReloadTick] = useState(0);
   const [state, setState] = useState<ListState>({ kind: "loading" });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    parseTraceLocation(location.search)
+  );
   // 实时增量（第 1 页合并用）：每来一条 SSE 事件 +1 版本，列表/徽标随之重算
   const liveRows = useLiveTraceRows();
   // 重连成功 = 浏览器自动重连上来了。它**不会**带 Last-Event-ID（实测重连请求头
@@ -119,7 +125,13 @@ export default function TracePage() {
     if (!isPageChangeAllowed(next, page, totalPages)) return;
     // 翻页清空选中：跨页残留的选中行会让右栏与列表不同页，语义错乱（详情联动归 #20）
     setSelectedId(null);
+    navigate(traceBaseLocation());
     setPage(next);
+  };
+
+  const handleSelect = (traceId: string) => {
+    setSelectedId(traceId);
+    navigate(traceLocation(traceId));
   };
 
   const retry = () => {
@@ -154,7 +166,7 @@ export default function TracePage() {
             state={state}
             items={viewItems}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={handleSelect}
             onRetry={retry}
           />
           {/* 一页也显示：默认 demo 只有 1 条 trace，隐藏会让「共 1 条」不可见（票面要求分页控件在场） */}

@@ -11,6 +11,9 @@
 
 import type { AuditListItem } from "../api/audits";
 import { formatAuditTime } from "../api/audits";
+import { useNavigate } from "react-router-dom";
+import { traceLocation } from "../lib/urlState";
+import AuditPayloadPanel from "./AuditPayloadPanel";
 import { AuditVerdictBadges, TruncatedMark } from "./AuditVerdictBadges";
 
 export function AuditTableEmpty({ title, hint }: { title: string; hint: string }) {
@@ -48,45 +51,61 @@ export default function AuditTable({
   selectedId: number | null;
   onSelect: (id: number | null) => void;
 }) {
+  const navigate = useNavigate();
   return (
     <div className="audit-body">
       <AuditTableHead />
       {items.map((row) => {
         const selected = row.id === selectedId;
         return (
-          <button
-            key={row.id}
-            type="button"
-            className={`audit-row${selected ? " selected" : ""}`}
-            aria-pressed={selected}
-            data-audit-id={row.id}
-            onClick={() => onSelect(selected ? null : row.id)}
-          >
-            <span className="aid">#{row.id}</span>
-            <span className="atime">{formatAuditTime(row.created_at_unix_nano)}</span>
-            <span className="atool">
-              <span className="atool-name">{row.tool_name}</span>
-              {/* #2 M4：agent_id 维度必须在场 */}
-              <span className="agent-chip" title="agent_id">
-                {row.agent_id}
+          <div className={`audit-entry${selected ? " selected" : ""}`} key={row.id}>
+            <button
+              type="button"
+              className={`audit-row${selected ? " selected" : ""}`}
+              aria-pressed={selected}
+              aria-expanded={selected}
+              data-audit-id={row.id}
+              onClick={() => onSelect(selected ? null : row.id)}
+            >
+              <span className="aid">#{row.id}</span>
+              <span className="atime">{formatAuditTime(row.created_at_unix_nano)}</span>
+              <span className="atool">
+                <span className="atool-name">{row.tool_name}</span>
+                {/* #2 M4：agent_id 维度必须在场 */}
+                <span className="agent-chip" title="agent_id">
+                  {row.agent_id}
+                </span>
               </span>
-            </span>
-            <span className="abadges">
-              <AuditVerdictBadges row={row} />
-              {row.payload_truncated ? <TruncatedMark /> : null}
-            </span>
-            <span className="arule">
-              {row.rule_id ? (
-                <span className="arule-id">{row.rule_id}</span>
-              ) : (
-                <span className="arule-none">—</span>
-              )}
-              <small>{row.reason ?? "未命中任何规则"}</small>
-            </span>
-            <span className="aselect" aria-hidden="true">
-              {selected ? "已选中" : ""}
-            </span>
-          </button>
+              <span className="abadges">
+                <AuditVerdictBadges row={row} />
+                {row.payload_truncated ? <TruncatedMark /> : null}
+              </span>
+              <span className="arule">
+                {row.rule_id ? (
+                  <span className="arule-id">{row.rule_id}</span>
+                ) : (
+                  <span className="arule-none">—</span>
+                )}
+                <small>{row.reason ?? "未命中任何规则"}</small>
+              </span>
+              <span className="aselect" aria-hidden="true">
+                {selected ? "已展开" : ""}
+              </span>
+            </button>
+            {selected ? (
+              <div className="audit-expanded">
+                <AuditPayloadPanel payload={row.payload} truncated={row.payload_truncated} />
+                <button
+                  type="button"
+                  className="btn audit-trace-link"
+                  aria-label={`查看 trace ${row.trace_id}`}
+                  onClick={() => navigate(traceLocation(row.trace_id))}
+                >
+                  → trace
+                </button>
+              </div>
+            ) : null}
+          </div>
         );
       })}
     </div>

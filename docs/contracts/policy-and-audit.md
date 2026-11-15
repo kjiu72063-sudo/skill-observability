@@ -95,6 +95,8 @@ Verdict 定稿（对齐 #8）：`Verdict(verdict: "allow"|"block", matched_rule:
 
 ## 2. 规则存储与热生效
 
+通用 JSON 约定：`*_unix_nano` 超 2^53 必须 JSON 字符串承载。
+
 ```sql
 CREATE TABLE rule (
   id            TEXT PRIMARY KEY,   -- 完整 slug 校验在 API 层（422），DDL 只做粗检
@@ -162,9 +164,12 @@ CREATE INDEX idx_audit_rule    ON audit (rule_id);
 | `agent_id` | string | — | 精确匹配 |
 | `tool_name` | string | — | 精确匹配 |
 | `rule_id` | string | — | 精确匹配 |
+| `trace_id` | string | — | 精确匹配 |
 | `from` / `to` | int（unix nano） | — | `created_at_unix_nano` 范围 |
 | `page` | int | 1 | 1-based |
 | `page_size` | int | 20 | 1–100 |
+
+`trace_id` 与其他过滤参数按 AND 组合。本端点不增加 `span_id` 查询参数；调用方先按 `trace_id` 拉取该 trace 的审计记录，再按响应中的 `span_id` 精确定位。
 
 响应（分页形状沿用 trace 契约 §2.1）：
 
@@ -235,17 +240,16 @@ CREATE INDEX idx_audit_rule    ON audit (rule_id);
 | 2 | 进行中 Trace | root span `end_time_unix_nano IS NULL` 的行数 | `GET /api/traces?live=true` → `total`（trace 契约 §2.1 新增参数） |
 | 3 | Skill 调用总数 | 审计行数（每次 Skill 调用恰一行，无论 verdict） | `GET /api/audits?page_size=1` → `total` |
 | 4 | 拦截次数 | `verdict='block'` 的审计行数 | `GET /api/audits?verdict=block&page_size=1` → `total` |
-| 5 | 观察期命中 | `verdict='allow' AND action='audit'` 的审计行数 | `GET /api/audits?action=audit&page_size=1` → `total`（§3.2 新增参数） |
+| 5 | 观察期命中 | §3.2 `action=audit` 的权威语义 | `GET /api/audits?action=audit&page_size=1` → `total`（§3.2 新增参数） |
 | 6 | 拦截率 | 卡4 ÷ 卡3，前端本地计算；分母=全部 Skill 调用（非 trace 数） | 无端点 |
 | 7 | Top 命中规则 | hits 最多的规则；并列取 rule_id 升序首个 | `GET /api/audits/stats/by-rule?limit=1` → `items[0]`（§3.3） |
 | 8 | 启用中规则 | `enabled=true` 的规则数 | `GET /api/rules`（不分页）→ 客户端 count |
 
-统计范围 = DB 全量；「近 7 天」时间窗参数（`from`/`to` 各端点已支持）留给 M3 打磨阶段按演示体量决定是否上卡片。
+统计范围 = DB 全量；`from`/`to` 对 `/api/audits`、`/api/traces` 已支持；`/api/audits/stats/by-rule` 无时间参数；「近 7 天」仍留给 M3 打磨阶段按演示体量决定是否上卡片。
 
 ### 3.5 `GET /api/rules`（引用）
 
 规则列表端点形状见 §4；统计卡 8 直接消费其 `items`（不分页，规则量小）。
-- **统计端点不在本契约**（口径挂 #2 原型确认，地图 fog）。
 
 ## 4. 管理 API（规则 CRUD）
 

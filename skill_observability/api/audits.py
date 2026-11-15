@@ -22,9 +22,10 @@ def build_audits_router(storage: Storage) -> APIRouter:
         to: int | None = None,
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
+        trace_id: str | None = None,
     ) -> dict:
         items, total = storage.list_audits(
-            verdict, agent_id, tool_name, rule_id, from_ns, to, page, page_size, action
+            verdict, agent_id, tool_name, rule_id, from_ns, to, page, page_size, action, trace_id
         )
         return {"items": items, "page": page, "page_size": page_size, "total": total}
 

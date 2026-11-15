@@ -8,10 +8,11 @@
  *   也不自算总数（total 一律用响应里的值）。
  * - 竞态：每次 effect 自建 AbortController，cleanup 即 abort（与原 Trace 列表同款）。
  *
- * 本票不做：行展开 payload / → trace 跳转（归 M2-08）、实时流（保持 REST 快照）。
+ * M2-08：选中行展开 payload，并通过 URL 状态恢复定位；数据仍是 REST 快照，不做实时流。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   AUDIT_PAGE_SIZE,
@@ -25,6 +26,7 @@ import AuditFilters from "../components/AuditFilters";
 import AuditPager from "../components/AuditPager";
 import AuditTable, { AuditTableEmpty } from "../components/AuditTable";
 import { totalPagesOf } from "../components/TracePager";
+import { auditBaseLocation, auditLocation, parseAuditLocation } from "../lib/urlState";
 import "./Audit.css";
 
 type ListState =
@@ -39,12 +41,23 @@ function filterQueryLabel(filter: AuditFilter): string {
 }
 
 export default function AuditPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<AuditFilter>("all");
   const [page, setPage] = useState(1);
   // 重试同一页：page/filter 都不变也要重新触发 effect
   const [reloadTick, setReloadTick] = useState(0);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(() =>
+    parseAuditLocation(location.search)
+  );
   const [state, setState] = useState<ListState>({ kind: "loading" });
+  const locatedAuditId = useRef<number | null>(null);
+
+  useEffect(() => {
+    const auditId = parseAuditLocation(location.search);
+    setSelectedId(auditId);
+    if (locatedAuditId.current !== auditId) locatedAuditId.current = null;
+  }, [location.search]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -86,18 +99,56 @@ export default function AuditPage() {
     };
   }, [page, filter, reloadTick]);
 
+  useEffect(() => {
+    if (state.kind !== "ready" || selectedId === null) return;
+    if (state.items.some((item) => item.id === selectedId)) {
+      locatedAuditId.current = selectedId;
+      return;
+    }
+    if (locatedAuditId.current === selectedId || state.page !== 1) return;
+    locatedAuditId.current = selectedId;
+
+    const ctrl = new AbortController();
+    let alive = true;
+    const locate = async () => {
+      const totalPages = totalPagesOf(state.total, state.pageSize);
+      for (let candidate = 2; candidate <= totalPages; candidate += 1) {
+        const body = await fetchAudits(candidate, filter, state.pageSize, ctrl.signal);
+        if (body.items.some((item) => item.id === selectedId)) {
+          if (alive) setPage(candidate);
+          return;
+        }
+      }
+    };
+    locate().catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      // 列表主请求仍是错误状态的唯一来源；定位失败不覆盖当前可用列表。
+    });
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
+  }, [filter, selectedId, state]);
+
   const handleFilterChange = (next: AuditFilter) => {
     if (next === filter) return;
     setFilter(next);
     setPage(1); // 票面验收：筛选切换后页码重置到 1
     setSelectedId(null); // 换了筛选集合，旧选中行不在眼前
+    navigate(auditBaseLocation());
   };
 
   const handlePageChange = (next: number) => {
     if (next === page || next < 1) return;
     if (state.kind === "ready" && next > Math.ceil(state.total / state.pageSize)) return;
     setSelectedId(null);
+    navigate(auditBaseLocation());
     setPage(next);
+  };
+
+  const handleSelect = (id: number | null) => {
+    setSelectedId(id);
+    navigate(id === null ? auditBaseLocation() : auditLocation(id));
   };
 
   const retry = () => {
@@ -124,7 +175,7 @@ export default function AuditPage() {
         <AuditBody
           state={state}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={handleSelect}
           onRetry={retry}
         />
         {state.kind === "ready" && state.total > 0 ? (

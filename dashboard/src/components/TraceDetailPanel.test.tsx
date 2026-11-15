@@ -281,13 +281,23 @@ describe("span 详情卡（M2-05 #20）", () => {
     expect(screen.getByText("boom")).toBeInTheDocument();
   });
 
-  it("「查看审计行」是禁用态占位（M8 反链在 M2-08 接通）", async () => {
+  it("M8：execute_tool span 显示可用的「查看审计行」反链", async () => {
     stubDetail(DEMO_SPANS_JSON);
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /^span invoke_agent/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^span execute_tool query_user_db/ }));
     const link = await screen.findByRole("button", { name: "查看审计行" });
-    expect(link).toBeDisabled();
-    expect(link).toHaveAttribute("title", expect.stringContaining("M2-08"));
+    expect(link).toBeEnabled();
+  });
+
+  it("M8：chat 与 invoke_agent span 完全不渲染审计反链", async () => {
+    stubDetail(DEMO_SPANS_JSON);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^span invoke_agent/ }));
+    expect(screen.queryByRole("button", { name: "查看审计行" })).toBeNull();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^span chat gpt-4o-mini/ })[0]);
+    expect(screen.queryByRole("button", { name: "查看审计行" })).toBeNull();
   });
 });
 

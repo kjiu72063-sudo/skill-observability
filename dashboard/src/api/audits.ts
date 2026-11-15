@@ -30,7 +30,10 @@ export const AUDIT_FILTERS: ReadonlyArray<{ key: AuditFilter; label: string }> =
   { key: "observe", label: "观察期" },
 ];
 
-/** 契约 §3.2 列表项（payload 不消费——展开归 M2-08）。 */
+/** 契约 §3.2 已解析的 payload JSON 对象。 */
+export type AuditPayload = Record<string, unknown>;
+
+/** 契约 §3.2 列表项。 */
 export interface AuditListItem {
   id: number;
   trace_id: string;
@@ -44,6 +47,7 @@ export interface AuditListItem {
   /** 命中规则的动作；NULL = 未命中 */
   action: "block" | "audit" | null;
   reason: string | null;
+  payload: AuditPayload;
   /** 8KB 上限截断标志（契约 §3.1） */
   payload_truncated: boolean;
   /** 纳秒字符串（无损承载） */
@@ -82,10 +86,12 @@ export async function fetchAudits(
   page: number,
   filter: AuditFilter,
   pageSize: number = AUDIT_PAGE_SIZE,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  traceId?: string
 ): Promise<AuditListPage> {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   for (const [k, v] of Object.entries(auditQuery(filter))) query.set(k, v);
+  if (traceId !== undefined) query.set("trace_id", traceId);
   const body = await apiGet<AuditListPage>(`/audits?${query.toString()}`, signal);
   if (!Array.isArray(body.items) || typeof body.total !== "number") {
     throw new Error(`GET /api/audits 响应形状异常（缺 items/total，page=${page}）`);
