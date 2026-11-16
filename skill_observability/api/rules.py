@@ -10,10 +10,11 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from skill_observability.db import Storage
 from skill_observability.engine import PolicyEngine
+from skill_observability.constants import ACTION_AUDIT, ACTION_BLOCK
 
 _ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,63}$")
 _CATEGORIES = {"pii", "dangerous_command", "tool_denylist", "custom"}
-_ACTIONS = {"block", "audit"}
+_ACTIONS = {ACTION_BLOCK, ACTION_AUDIT}
 _FLAGS = {"i", "m", "s"}
 _MISSING = object()
 
@@ -29,13 +30,14 @@ def build_rules_router(storage: Storage, engine: PolicyEngine) -> APIRouter:
     async def create_rule(request: Request) -> dict:
         payload = await _read_payload(request)
         rule = _validate_rule(payload)
-        try:
-            created, version = storage.create_rule(rule)
-        except sqlite3.IntegrityError as exc:
-            if "UNIQUE constraint failed: rule.id" in str(exc):
-                raise _error(409, "rule id already exists") from exc
-            raise
-        _reload(engine, storage, version)
+        with storage.rule_update_lock:
+            try:
+                created, version = storage.create_rule(rule)
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed: rule.id" in str(exc):
+                    raise _error(409, "rule id already exists") from exc
+                raise
+            _reload(engine, storage, version)
         return created
 
     @router.put("/api/rules/{rule_id}")
@@ -44,18 +46,20 @@ def build_rules_router(storage: Storage, engine: PolicyEngine) -> APIRouter:
         if not isinstance(payload, dict) or payload.get("id") != rule_id:
             raise _error(422, "body.id must match path id")
         rule = _validate_rule(payload)
-        updated, version = storage.replace_rule(rule_id, rule)
-        if updated is None:
-            raise _error(404, "rule not found")
-        _reload(engine, storage, version)
+        with storage.rule_update_lock:
+            updated, version = storage.replace_rule(rule_id, rule)
+            if updated is None:
+                raise _error(404, "rule not found")
+            _reload(engine, storage, version)
         return updated
 
     @router.delete("/api/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_rule(rule_id: str) -> Response:
-        version = storage.delete_rule(rule_id)
-        if version is None:
-            raise _error(404, "rule not found")
-        _reload(engine, storage, version)
+        with storage.rule_update_lock:
+            version = storage.delete_rule(rule_id)
+            if version is None:
+                raise _error(404, "rule not found")
+            _reload(engine, storage, version)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return router
@@ -81,11 +85,11 @@ def _validate_rule(payload: Any) -> dict:
         raise _error(422, "name must be a string")
 
     category = payload.get("category", _MISSING)
-    if category not in _CATEGORIES:
+    if not isinstance(category, str) or category not in _CATEGORIES:
         raise _error(422, "category is invalid")
 
     action = payload.get("action", _MISSING)
-    if action not in _ACTIONS:
+    if not isinstance(action, str) or action not in _ACTIONS:
         raise _error(422, "action is invalid")
 
     enabled = payload.get("enabled", True)

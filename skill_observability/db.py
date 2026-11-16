@@ -125,6 +125,11 @@ class Storage:
             self._conn.executescript(_AUDIT_DDL)
             self._conn.commit()
 
+    @property
+    def rule_update_lock(self) -> threading.RLock:
+        """Serialize rule writes with the API's snapshot installation step."""
+        return self._lock
+
     # ---------------------------------------------------------------- 播种（policy §1.6）
 
     def seed_rules_if_empty(self, rules: list[dict], now_unix_nano: int) -> int:
