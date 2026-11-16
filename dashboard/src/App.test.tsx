@@ -39,7 +39,7 @@ describe("看板壳导航（M2-03 #18）", () => {
     for (const label of ["Trace", "审计日志", "规则管理", "统计卡片"]) {
       expect(screen.getByRole("link", { name: new RegExp(label) })).toBeInTheDocument();
     }
-    // 默认落在 Trace 占位页（Navigate to /trace）
+    // 默认落在 Trace 真页（Navigate to /trace）
     expect(window.location.hash).toBe("#/trace");
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Trace");
   });
@@ -55,13 +55,21 @@ describe("看板壳导航（M2-03 #18）", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("规则管理");
     fireEvent.click(screen.getByRole("link", { name: /统计卡片/ }));
     expect(window.location.hash).toBe("#/stats");
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("统计卡片");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("统计卡片");
+    expect(screen.getByRole("heading", { name: "01 调用链" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Trace 总数" })).toBeInTheDocument();
   });
 
-  it("统计路由仍保留占位页", () => {
+  it("统计路由渲染八卡三组真页", () => {
     stubFetchRejected();
     renderShellAtHash("#/stats");
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("统计卡片");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("统计卡片");
+    for (const group of ["01 调用链", "02 拦截", "03 规则"]) {
+      expect(screen.getByRole("heading", { name: group })).toBeInTheDocument();
+    }
+    for (const card of ["Trace 总数", "进行中 Trace", "Skill 调用总数", "拦截次数", "观察期命中", "拦截率", "Top 命中规则", "启用中规则"]) {
+      expect(screen.getByRole("heading", { name: card })).toBeInTheDocument();
+    }
   });
 
   it("直接以 #/audit 打开（模拟刷新落位），落在审计占位页且选中态正确", () => {

@@ -12,7 +12,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import TracePage from "./Trace";
 import AuditPage from "./Audit";
 import RulesPage from "./Rules";
-import { StatsPage } from "./placeholders";
+import StatsPage from "./Stats";
 
 export default function AppRoutes() {
   return (
