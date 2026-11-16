@@ -44,7 +44,7 @@ describe("看板壳导航（M2-03 #18）", () => {
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Trace");
   });
 
-  it("点击导航 URL 随路由变化，占位页显示区块名", () => {
+  it("点击导航 URL 随路由变化，规则路由渲染真实页面", () => {
     stubFetchRejected();
     renderShellAtHash("");
     fireEvent.click(screen.getByRole("link", { name: /审计日志/ }));
@@ -52,9 +52,15 @@ describe("看板壳导航（M2-03 #18）", () => {
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("审计日志");
     fireEvent.click(screen.getByRole("link", { name: /规则管理/ }));
     expect(window.location.hash).toBe("#/rules");
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("规则管理");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("规则管理");
     fireEvent.click(screen.getByRole("link", { name: /统计卡片/ }));
     expect(window.location.hash).toBe("#/stats");
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("统计卡片");
+  });
+
+  it("统计路由仍保留占位页", () => {
+    stubFetchRejected();
+    renderShellAtHash("#/stats");
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("统计卡片");
   });
 

@@ -16,6 +16,7 @@ import { NavLink } from "react-router-dom";
 
 import NavBadge from "./NavBadge";
 import { fetchAuditTotal, fetchTraceTotal } from "../api/client";
+import { fetchRules } from "../api/rules";
 import { useDebouncedStreamTick } from "../lib/traceStore";
 
 /** 徽标重取的防抖窗口（票面建议值）：一次场景 run 的事件洪峰合成一次重取。 */
@@ -43,7 +44,7 @@ const ITEMS: ReadonlyArray<{
   label: string;
   paths: string;
   circles?: ReadonlyArray<{ cx: number; cy: number; r: number }>;
-  badge?: "placeholder";
+  badge?: "rules";
 }> = [
   { to: "/trace", label: "Trace", paths: "M8 6h13M8 12h13M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01" },
   {
@@ -56,7 +57,7 @@ const ITEMS: ReadonlyArray<{
     label: "规则管理",
     paths: "M12 3v3m0 12v3|M3 12h3m12 0h3|M5.6 5.6l2.2 2.2m8.4 8.4 2.2 2.2m0-12.8-2.2 2.2|M7.8 16.2l-2.2 2.2",
     circles: [{ cx: 12, cy: 12, r: 3.4 }],
-    badge: "placeholder",
+    badge: "rules",
   },
   { to: "/stats", label: "统计卡片", paths: "M3 3v18h18|M7 15l4-5 3.5 3L19 7" },
 ];
@@ -68,16 +69,17 @@ type BadgeValue = number | null | undefined;
  * 徽标取数：挂载取一次 + 每条 SSE 事件后 200ms 防抖重取（tick 由状态层给）。
  * 两枚独立成败，一枚 500 不拖垮另一枚。
  */
-function useNavTotals(): { traces: BadgeValue; audits: BadgeValue } {
-  const [totals, setTotals] = useState<{ traces: BadgeValue; audits: BadgeValue }>({
+function useNavTotals(): { traces: BadgeValue; audits: BadgeValue; rules: BadgeValue } {
+  const [totals, setTotals] = useState<{ traces: BadgeValue; audits: BadgeValue; rules: BadgeValue }>({
     traces: undefined,
     audits: undefined,
+    rules: undefined,
   });
   const tick = useDebouncedStreamTick(BADGE_DEBOUNCE_MS);
 
   useEffect(() => {
     let alive = true;
-    const set = (key: "traces" | "audits") => (v: number | null) => {
+    const set = (key: "traces" | "audits" | "rules") => (v: number | null) => {
       if (alive) setTotals((prev) => ({ ...prev, [key]: v }));
     };
     fetchTraceTotal().then(set("traces")).catch(() => set("traces")(null));
@@ -86,6 +88,15 @@ function useNavTotals(): { traces: BadgeValue; audits: BadgeValue } {
       alive = false;
     };
   }, [tick]);
+
+  useEffect(() => {
+    let alive = true;
+    const loadRules = () => fetchRules().then((items) => { if (alive) setTotals((prev) => ({ ...prev, rules: items.length })); }).catch(() => { if (alive) setTotals((prev) => ({ ...prev, rules: null })); });
+    const onRulesChanged = () => { void loadRules(); };
+    void loadRules();
+    window.addEventListener("rules-changed", onRulesChanged);
+    return () => { alive = false; window.removeEventListener("rules-changed", onRulesChanged); };
+  }, []);
 
   return totals;
 }
@@ -97,10 +108,10 @@ export default function Sidebar() {
     <nav className="rail" aria-label="看板导航">
       <div className="rail-cap">看板</div>
       {ITEMS.map((item) => {
-        // Trace/审计 = 真数据徽标；规则 = 「—」占位（badge=null）；统计 = 无徽标（undefined）
+        // Trace、审计、规则徽标各自消费其 API；统计不显示计数。
         const badge: BadgeValue =
-          item.badge === "placeholder"
-            ? null
+          item.badge === "rules"
+            ? totals.rules
             : item.to === "/trace"
               ? totals.traces
               : item.to === "/audit"

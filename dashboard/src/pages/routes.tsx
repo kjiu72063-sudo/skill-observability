@@ -11,7 +11,8 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import TracePage from "./Trace";
 import AuditPage from "./Audit";
-import { RulesPage, StatsPage } from "./placeholders";
+import RulesPage from "./Rules";
+import { StatsPage } from "./placeholders";
 
 export default function AppRoutes() {
   return (

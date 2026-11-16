@@ -20,10 +20,6 @@ export function PlaceholderPage({ title, ticket }: PlaceholderProps) {
   );
 }
 
-export function RulesPage() {
-  return <PlaceholderPage title="规则管理" ticket="M2-09/M2-10" />;
-}
-
 export function StatsPage() {
   return <PlaceholderPage title="统计卡片" ticket="M2-11/M2-12" />;
 }
