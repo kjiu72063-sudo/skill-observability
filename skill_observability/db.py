@@ -385,10 +385,12 @@ class Storage:
 
     def list_traces(
         self, agent_id: str | None, from_ns: int | None, to_ns: int | None,
-        page: int, page_size: int,
+        page: int, page_size: int, live: bool = False,
     ) -> tuple[list[dict], int]:
         where = ["s.parent_span_id IS NULL"]
         params: list[Any] = []
+        if live:
+            where.append("s.end_time_unix_nano IS NULL")
         if agent_id is not None:
             where.append("s.agent_id = ?")
             params.append(agent_id)
@@ -508,7 +510,49 @@ class Storage:
             })
         return items, total
 
-    # ---------------------------------------------------------------- 内部
+    def list_audit_stats_by_rule(
+        self, verdict: str | None, agent_id: str | None, limit: int,
+    ) -> tuple[list[dict], int]:
+        where = ["rule_id IS NOT NULL"]
+        params: list[Any] = []
+        if verdict is not None:
+            where.append("verdict = ?")
+            params.append(verdict)
+        if agent_id is not None:
+            where.append("agent_id = ?")
+            params.append(agent_id)
+        where_sql = " AND ".join(where)
+        with self._lock:
+            total = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM ("
+                " SELECT rule_id, rule_name, action FROM audit"
+                f" WHERE {where_sql} GROUP BY rule_id, rule_name, action"
+                ")",
+                params,
+            ).fetchone()["c"]
+            rows = self._conn.execute(
+                "SELECT rule_id, rule_name, action,"
+                " SUM(CASE WHEN verdict = 'block' THEN 1 ELSE 0 END)"
+                " AS verdict_block_hits,"
+                " SUM(CASE WHEN verdict = 'allow' THEN 1 ELSE 0 END)"
+                " AS verdict_audit_hits, COUNT(*) AS hits"
+                " FROM audit"
+                f" WHERE {where_sql}"
+                " GROUP BY rule_id, rule_name, action"
+                " ORDER BY hits DESC, rule_id ASC LIMIT ?",
+                [*params, limit],
+            ).fetchall()
+        return [
+            {
+                "rule_id": row["rule_id"],
+                "rule_name": row["rule_name"],
+                "action": row["action"],
+                "verdict_block_hits": row["verdict_block_hits"],
+                "verdict_audit_hits": row["verdict_audit_hits"],
+                "hits": row["hits"],
+            }
+            for row in rows
+        ], total
 
     @staticmethod
     def _span_row_to_dict(row: sqlite3.Row) -> dict:

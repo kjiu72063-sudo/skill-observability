@@ -16,11 +16,12 @@ def build_traces_router(storage: Storage) -> APIRouter:
         from_ns: int | None = Query(default=None, alias="from",
                                     description="root start_time_unix_nano >= from"),
         to: int | None = Query(default=None, description="root start_time_unix_nano <= to"),
+        live: bool = Query(default=False),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
     ) -> dict:
         # 以 root span（parent_span_id IS NULL）为行单位，start 倒序（契约 §2.1）
-        items, total = storage.list_traces(agent_id, from_ns, to, page, page_size)
+        items, total = storage.list_traces(agent_id, from_ns, to, page, page_size, live)
         return {"items": items, "page": page, "page_size": page_size, "total": total}
 
     @router.get("/api/traces/{trace_id}")

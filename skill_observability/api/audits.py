@@ -29,4 +29,13 @@ def build_audits_router(storage: Storage) -> APIRouter:
         )
         return {"items": items, "page": page, "page_size": page_size, "total": total}
 
+    @router.get("/api/audits/stats/by-rule")
+    async def audit_stats_by_rule(
+        limit: int = Query(default=5, ge=1, le=50),
+        verdict: str | None = Query(default=None, pattern="^(allow|block)$"),
+        agent_id: str | None = None,
+    ) -> dict:
+        items, total = storage.list_audit_stats_by_rule(verdict, agent_id, limit)
+        return {"items": items, "total": total}
+
     return router

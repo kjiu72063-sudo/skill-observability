@@ -42,7 +42,7 @@ class _Deps:
     """测试进程内装配：tmp 库、种子播种、引擎启动加载——与 demo.py DemoDeps 同构。"""
 
     def __init__(self, tmp_path: Path):
-        self.storage = Storage(tmp_path / "test.db")
+        self.storage = Storage(tmp_path / "aop_test_26.sqlite")
         seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
         self.storage.seed_rules_if_empty(seed, time.time_ns())
         self.engine = PolicyEngine()
@@ -553,3 +553,216 @@ class TestAuditTraceFilter:
         resp = client.get("/api/audits", params={"trace_id": "f" * 32})
         assert resp.status_code == 200
         assert resp.json() == {"items": [], "page": 1, "page_size": 20, "total": 0}
+
+
+def _insert_stat_audit(
+    deps,
+    index: int,
+    *,
+    rule_id: str | None,
+    rule_name: str | None,
+    action: str | None,
+    verdict: str,
+    agent_id: str = "agent-a",
+) -> None:
+    deps.storage.insert_audit(
+        trace_id=f"{index:032x}",
+        span_id=f"{index:016x}",
+        agent_id=agent_id,
+        tool_name="stat_tool",
+        verdict=verdict,
+        rule_id=rule_id,
+        rule_name=rule_name,
+        action=action,
+        reason="stats regression",
+        payload_json="{}",
+        payload_truncated=False,
+        created_at_unix_nano=time.time_ns(),
+    )
+
+
+class TestM211TraceLive:
+    def test_live_filters_root_before_paging_and_preserves_default_behavior(self, deps, client):
+        ended_trace = "1" * 32
+        ended_root = "1" * 16
+        deps.storage.start_span(
+            ended_trace, ended_root, None, "ended root", "SERVER", 200, {}, "agent-a"
+        )
+        deps.storage.end_span(ended_root, 201, "OK", None, {}, [])
+        deps.storage.start_span(
+            ended_trace, "2" * 16, ended_root, "ended child", "INTERNAL", 201, {}, "agent-a"
+        )
+
+        live_trace = "3" * 32
+        live_root = "3" * 16
+        deps.storage.start_span(
+            live_trace, live_root, None, "live root", "SERVER", 100, {}, "agent-a"
+        )
+
+        default_response = client.get("/api/traces", params={"page_size": 1})
+        false_response = client.get("/api/traces", params={"live": "false", "page_size": 1})
+        live_response = client.get("/api/traces", params={"live": "true", "page_size": 1})
+
+        assert default_response.status_code == 200
+        assert false_response.status_code == 200
+        assert live_response.status_code == 200
+        assert false_response.json() == default_response.json()
+        assert default_response.json()["total"] == 2
+        assert default_response.json()["items"][0]["trace_id"] == ended_trace
+        assert live_response.json()["total"] == 1
+        assert [item["trace_id"] for item in live_response.json()["items"]] == [live_trace]
+        assert live_response.json()["items"][0]["span_count"] == 1
+
+        deps.storage.end_span(live_root, 300, "OK", None, {}, [])
+        assert client.get("/api/traces", params={"live": "true"}).json()["total"] == 0
+
+    def test_live_composes_with_agent_and_root_time_filters(self, deps, client):
+        selected_trace = "4" * 32
+        other_trace = "5" * 32
+        deps.storage.start_span(
+            selected_trace, "4" * 16, None, "selected", "SERVER", 300, {}, "agent-a"
+        )
+        deps.storage.start_span(
+            other_trace, "5" * 16, None, "other", "SERVER", 400, {}, "agent-b"
+        )
+
+        response = client.get(
+            "/api/traces",
+            params={"live": "true", "agent_id": "agent-a", "from": 250, "to": 350},
+        )
+        assert response.status_code == 200
+        assert response.json()["total"] == 1
+        assert response.json()["items"][0]["trace_id"] == selected_trace
+
+
+class TestM211AuditStatsByRule:
+    @staticmethod
+    def _insert_fixture_audits(deps):
+        _insert_stat_audit(
+            deps, 1, rule_id="rule-a", rule_name="Rule A", action="block", verdict="block"
+        )
+        _insert_stat_audit(
+            deps, 2, rule_id="rule-a", rule_name="Rule A", action="block", verdict="allow"
+        )
+        _insert_stat_audit(
+            deps, 3, rule_id="rule-a", rule_name="Rule A", action="block", verdict="allow"
+        )
+        _insert_stat_audit(
+            deps, 4, rule_id="rule-b", rule_name="Rule B", action="audit", verdict="allow"
+        )
+        _insert_stat_audit(
+            deps, 5, rule_id="rule-b", rule_name="Rule B", action="audit", verdict="allow"
+        )
+        _insert_stat_audit(
+            deps, 6, rule_id="rule-b", rule_name="Rule B", action="audit", verdict="block"
+        )
+        for index, rule_id in enumerate(("rule-c", "rule-d", "rule-e"), start=7):
+            _insert_stat_audit(
+                deps,
+                index,
+                rule_id=rule_id,
+                rule_name=rule_id.title(),
+                action="block",
+                verdict="block",
+            )
+        _insert_stat_audit(
+            deps,
+            10,
+            rule_id="rule-f",
+            rule_name="Rule F",
+            action="block",
+            verdict="block",
+            agent_id="agent-b",
+        )
+        _insert_stat_audit(
+            deps,
+            11,
+            rule_id=None,
+            rule_name=None,
+            action=None,
+            verdict="allow",
+        )
+
+    def test_default_limit_and_stable_tie_order(self, deps, client):
+        self._insert_fixture_audits(deps)
+
+        default_body = client.get("/api/audits/stats/by-rule").json()
+        limit_one = client.get("/api/audits/stats/by-rule", params={"limit": 1}).json()
+        limit_fifty = client.get("/api/audits/stats/by-rule", params={"limit": 50}).json()
+
+        assert default_body["total"] == 6
+        assert [item["rule_id"] for item in default_body["items"]] == [
+            "rule-a", "rule-b", "rule-c", "rule-d", "rule-e"
+        ]
+        assert [item["hits"] for item in default_body["items"]] == [3, 3, 1, 1, 1]
+        assert limit_one["items"] == [default_body["items"][0]]
+        assert limit_fifty["total"] == 6
+        assert [item["rule_id"] for item in limit_fifty["items"]] == [
+            "rule-a", "rule-b", "rule-c", "rule-d", "rule-e", "rule-f"
+        ]
+
+    def test_verdict_agent_filters_and_snapshot_counts(self, deps, client):
+        self._insert_fixture_audits(deps)
+
+        block_body = client.get(
+            "/api/audits/stats/by-rule", params={"verdict": "block"}
+        ).json()
+        allow_body = client.get(
+            "/api/audits/stats/by-rule", params={"verdict": "allow", "agent_id": "agent-a"}
+        ).json()
+        agent_body = client.get(
+            "/api/audits/stats/by-rule", params={"agent_id": "agent-b"}
+        ).json()
+
+        assert block_body["total"] == 6
+        assert all(item["hits"] == 1 for item in block_body["items"])
+        assert allow_body["total"] == 2
+        assert [(item["rule_id"], item["hits"]) for item in allow_body["items"]] == [
+            ("rule-a", 2), ("rule-b", 2)
+        ]
+        assert agent_body["total"] == 1
+        assert agent_body["items"][0]["rule_id"] == "rule-f"
+        assert agent_body["items"][0]["verdict_block_hits"] == 1
+        assert agent_body["items"][0]["verdict_audit_hits"] == 0
+
+    def test_invalid_limit_and_verdict_return_422(self, client):
+        for params in (
+            {"limit": 0},
+            {"limit": 51},
+            {"verdict": "deny"},
+        ):
+            assert client.get("/api/audits/stats/by-rule", params=params).status_code == 422
+
+    def test_deleted_rule_keeps_audit_snapshot_and_ignores_null_rule(self, deps, client):
+        _insert_stat_audit(
+            deps,
+            20,
+            rule_id="r1-pii-id-card",
+            rule_name="历史快照规则",
+            action="block",
+            verdict="block",
+        )
+        _insert_stat_audit(
+            deps,
+            21,
+            rule_id=None,
+            rule_name=None,
+            action=None,
+            verdict="allow",
+        )
+
+        delete_response = client.delete("/api/rules/r1-pii-id-card")
+        stats_response = client.get("/api/audits/stats/by-rule", params={"limit": 50})
+
+        assert delete_response.status_code == 204
+        assert stats_response.status_code == 200
+        body = stats_response.json()
+        assert body["total"] == 1
+        assert body["items"] == [{
+            "rule_id": "r1-pii-id-card",
+            "rule_name": "历史快照规则",
+            "action": "block",
+            "verdict_block_hits": 1,
+            "verdict_audit_hits": 0,
+            "hits": 1,
+        }]
