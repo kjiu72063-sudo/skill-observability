@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./client", async () => {
+  const actual = await vi.importActual<typeof import("./client")>("./client");
+  return { ...actual, apiGet: vi.fn(actual.apiGet), apiRequest: vi.fn(actual.apiRequest) };
+});
+
+import { apiGet, apiRequest } from "./client";
 import { createRule, deleteRule, fetchRules, replaceRule, type Rule } from "./rules";
 
 const rule: Rule = {
@@ -8,13 +14,14 @@ const rule: Rule = {
   description: null, created_at_unix_nano: "1760000000000000001", updated_at_unix_nano: "1760000000000000002",
 };
 const response = (body: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, text: async () => body === undefined ? "" : JSON.stringify(body) });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe("rules API", () => {
   it("GET returns all complete items and retains nanosecond timestamps as strings", async () => {
     const fetch = vi.fn().mockResolvedValue(response({ items: [rule] })); vi.stubGlobal("fetch", fetch);
     await expect(fetchRules()).resolves.toEqual([rule]);
     expect(fetch).toHaveBeenCalledWith("/api/rules", { signal: undefined });
+    expect(apiGet).toHaveBeenCalledWith("/rules", undefined);
   });
 
   it("rejects malformed list and rule response shapes", async () => {
@@ -34,6 +41,10 @@ describe("rules API", () => {
       ["/api/rules", "POST"], ["/api/rules/test-rule-01", "PUT"], ["/api/rules/test-rule-01", "DELETE"],
     ]);
     expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual(rule);
+    expect(apiRequest).toHaveBeenCalledTimes(3);
+    expect(apiRequest).toHaveBeenNthCalledWith(1, "/rules", expect.objectContaining({ method: "POST" }));
+    expect(apiRequest).toHaveBeenNthCalledWith(2, "/rules/test-rule-01", expect.objectContaining({ method: "PUT" }));
+    expect(apiRequest).toHaveBeenNthCalledWith(3, "/rules/test-rule-01", expect.objectContaining({ method: "DELETE" }));
   });
 
   it("preserves status and detail from 409 and 422 responses", async () => {

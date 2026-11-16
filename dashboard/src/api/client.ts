@@ -36,12 +36,18 @@ function extractDetail(raw: string): string {
   return raw.slice(0, 200) || "（空响应体）";
 }
 
-/** GET /api 下相对路径，返回无损解析后的 JSON。 */
-export async function apiGet<T = LosslessParsed>(path: string, signal?: AbortSignal): Promise<T> {
-  const resp = await fetch(`${API_BASE}${path}`, { signal });
+/** 通用 /api 请求，统一响应文本、错误和无损 JSON 解析。 */
+export async function apiRequest<T = LosslessParsed>(path: string, init: RequestInit = {}): Promise<T> {
+  const resp = await fetch(`${API_BASE}${path}`, init);
   const text = await resp.text();
   if (!resp.ok) throw new ApiError(resp.status, extractDetail(text));
+  if (resp.status === 204) return undefined as T;
   return parseLossless(text) as T;
+}
+
+/** GET /api 下相对路径，返回无损解析后的 JSON。 */
+export async function apiGet<T = LosslessParsed>(path: string, signal?: AbortSignal): Promise<T> {
+  return apiRequest<T>(path, { signal });
 }
 
 /* ---- M2-03（#18）徽标取数：?page_size=1 取 total，少拉一行数据 ---- */
