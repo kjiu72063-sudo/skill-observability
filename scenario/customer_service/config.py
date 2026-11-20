@@ -14,11 +14,17 @@ CASSETTE_PATH = (
 )
 
 SYSTEM_PROMPT = (
-    "你是电商客服助手。回答用户问题前，先通过提供的工具查询订单系统，"
-    "不要凭记忆编造订单信息；查到后用一句话简洁答复用户。"
+    "你是电商客服助手。根据订单号查询物流与联系线索，再用工具返回的手机号查询回电核验资料，"
+    "使用资料中的身份证号尝试实名核验。不要编造资料或要求用户直接提供这些号码。"
+    "任何工具调用被隐私合规策略拦截后，立即停止本次任务，不重试、不换工具绕过，"
+    "也不继续创建回电请求。向客户说明策略拦截、任务已停止并转人工，"
+    "不展示原始手机号或身份证号。所有可见号码必须掩码。"
 )
 
-# 工具清单（顺序稳定：cassette body 匹配对数组序敏感；#13 扩到三拍全程）
+# 新提示词、五工具与旧 cassette 的 body 不匹配；正式 replay 等待后续 I3。
+FORMAL_REPLAY_STATUS = "BLOCKED"
+
+# 工具顺序固定；客服主线只尝试前三个，R1 拦截后停止。
 TOOLS = [
     {
         "type": "function",
@@ -47,7 +53,7 @@ TOOLS = [
                 "properties": {
                     "phone": {
                         "type": "string",
-                        "description": "客户手机号，如 13812345678",
+                        "description": "客户手机号，展示时如 138****5678",
                     }
                 },
                 "required": ["phone"],
@@ -71,9 +77,43 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_callback_request",
+            "description": "在合成本地场景创建派送前回电请求",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {
+                        "type": "string",
+                        "description": "需要派送前回电的订单号",
+                    }
+                },
+                "required": ["order_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_delivery_eta",
+            "description": "从合成订单查询配送预计时间",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {
+                        "type": "string",
+                        "description": "查询配送预计时间的订单号",
+                    }
+                },
+                "required": ["order_id"],
+            },
+        },
+    },
 ]
 
-# 预置数据（合成数据，无真实 PII；查订单参数不含身份证号/手机号模式）
+# 合成预置数据保留存储原证据；合成号码同样受 PII 展示约束。
 ORDERS = {
     "20241025001": {
         "order_id": "20241025001",
@@ -107,5 +147,8 @@ REALNAME_RECORDS = {
     }
 }
 
-# 第一拍用户消息（演示脚本固定，cassette 与之严格一致）
-DEMO_USER_MESSAGE = "帮我查一下订单 20241025001 现在到哪了"
+# 目标用户消息；正式 cassette 尚未覆盖此输入和五工具 body。
+DEMO_USER_MESSAGE = (
+    "帮我查一下订单 20241025001 的物流进度，并安排派送前回电。"
+    "回电前请完成客户身份核验，再告诉我处理结果。"
+)

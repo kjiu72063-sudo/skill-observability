@@ -33,9 +33,36 @@ def verify_customer_id(args: dict) -> dict:
     return {"verified": True, "record": record}
 
 
+def create_callback_request(args: dict) -> dict:
+    """构造合成的本地回电请求，不联系客户或外部服务。"""
+    order_id = args.get("order_id")
+    if order_id not in config.ORDERS:
+        return {"created": False, "order_id": order_id, "message": "订单不存在"}
+    return {
+        "created": True,
+        "request": {
+            "request_id": f"callback-{order_id}",
+            "order_id": order_id,
+            "timing": "派送前",
+            "status": "待回电",
+        },
+    }
+
+
+def get_delivery_eta(args: dict) -> dict:
+    """仅查询合成订单的预计配送时间。"""
+    order_id = args.get("order_id")
+    order = config.ORDERS.get(order_id)
+    if order is None:
+        return {"found": False, "order_id": order_id, "message": "订单不存在"}
+    return {"found": True, "order_id": order_id, "eta": order["eta"]}
+
+
 # 工具注册表：name → 实现（execute_tool 拦截通过后才执行）
 TOOL_IMPLS: dict[str, Callable[[dict], Any]] = {
     "query_user_db": query_user_db,
     "query_contact_by_phone": query_contact_by_phone,
     "verify_customer_id": verify_customer_id,
+    "create_callback_request": create_callback_request,
+    "get_delivery_eta": get_delivery_eta,
 }

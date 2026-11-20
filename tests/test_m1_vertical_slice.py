@@ -3,7 +3,7 @@
 - 不走 demo.py 交互循环：进程内独立装配（tmp SQLite + 种子 4 条 + 引擎启动加载），
   ``TestClient`` 打 ASGI app，直接调用可导入的场景入口
   :func:`scenario.customer_service.agent.run_customer_service_turn`。
-- replay 档（vcr cassette ``record_mode="none"``）：零网络、零密钥、可重复。
+- #29 起使用受控 scripted LLM；旧正式 replay 的指纹保留，状态仍 BLOCKED。
 - 覆盖 #12/#13 修过的三条缺陷位（回归保护，经变异抽查验证有效）：
   ① 观察期 span 标记（f440b24①）→ ``test_observation_span_attributes``；
   ② audit payload 8KB 字节截断（f440b24②）→ ``test_audit_payload_truncated_over_cap``；
@@ -13,7 +13,11 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
+import re
+import socket
 import time
 from pathlib import Path
 
@@ -21,8 +25,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scenario.customer_service.agent import run_customer_service_turn
-from scenario.customer_service.config import CASSETTE_PATH, DEMO_USER_MESSAGE, MODEL
-from scenario.customer_service.llm import ReplayLlmClient
+from scenario.customer_service import config, tools as customer_tools
+from scenario.customer_service.config import DEMO_USER_MESSAGE
+from scenario.customer_service.scripted_llm import ScriptedLlmClient
 from skill_observability.app import create_app
 from skill_observability.db import Storage
 from skill_observability.engine import PolicyEngine
@@ -35,6 +40,43 @@ SEED_PATH = BASE_DIR / "seed" / "rules.json"
 # 场景三拍的三个工具调用（树三层 ×3 → 7 span）
 SPAN_COUNT_PER_RUN = 7
 
+ISSUE29_TOOL_NAMES = [
+    "query_user_db",
+    "query_contact_by_phone",
+    "verify_customer_id",
+    "create_callback_request",
+    "get_delivery_eta",
+]
+
+
+@pytest.fixture()
+def no_network(monkeypatch):
+    """保护同步工具/agent 测试；不包住 Windows ASGI 事件循环的内部 socketpair。"""
+    import httpx
+    import openai
+
+    attempts = []
+
+    def forbidden(*args, **kwargs):
+        attempts.append("external_io")
+        raise AssertionError("external I/O is forbidden in issue 29 tests")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", forbidden)
+    monkeypatch.setattr(openai, "OpenAI", forbidden)
+    monkeypatch.setattr(openai, "AsyncOpenAI", forbidden)
+    yield
+    assert len(attempts) == 0
+
+
+def _fixture_profile() -> dict:
+    """PII 仅从既有 fixture 在测试内存中读取。"""
+    phone = config.ORDERS["20241025001"]["customer_phone"]
+    return config.USER_PROFILES[phone]
+
 
 # ---------------------------------------------------------------- 装配（demo bootstrap 同构，进程隔离）
 
@@ -42,14 +84,14 @@ class _Deps:
     """测试进程内装配：tmp 库、种子播种、引擎启动加载——与 demo.py DemoDeps 同构。"""
 
     def __init__(self, tmp_path: Path):
-        self.storage = Storage(tmp_path / "aop_test_26.sqlite")
+        self.storage = Storage(tmp_path / "aop_test_29.sqlite")
         seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
         self.storage.seed_rules_if_empty(seed, time.time_ns())
         self.engine = PolicyEngine()
         self.engine.reload(self.storage.load_rule_rows(), self.storage.get_rules_version())
         self.hub = EventHub()
         self.sdk = ObservabilitySdk(self.storage, self.engine, self.hub)
-        self.llm = ReplayLlmClient(CASSETTE_PATH, model=MODEL)
+        self.llm = ScriptedLlmClient()
 
 
 @pytest.fixture()
@@ -175,7 +217,8 @@ class TestAuditTable:
         assert a2["verdict"] == "allow"
         assert a2["rule_id"] == "r1b-pii-phone-audit"
         assert a2["action"] == "audit"
-        assert a2["payload"] == {"phone": "13812345678"}
+        phone_matches = a2["payload"] == {"phone": _fixture_profile()["phone"]}
+        assert phone_matches, "fixture phone derivation mismatch"
         assert a2["trace_id"] == run["trace_id"]
 
         # ③ 身份证 block + r1（#10 人验4③）
@@ -183,8 +226,10 @@ class TestAuditTable:
         assert a3["verdict"] == "block"
         assert a3["rule_id"] == "r1-pii-id-card"
         assert a3["action"] == "block"
-        assert a3["payload"] == {"id_card": "110101199003071234"}
-        assert a3["reason"] and "110101199003071234" in a3["reason"]
+        identity_matches = a3["payload"] == {"id_card": _fixture_profile()["id_card"]}
+        assert identity_matches, "fixture identity derivation mismatch"
+        reason_matches = bool(a3["reason"]) and _fixture_profile()["id_card"] in a3["reason"]
+        assert reason_matches, "stored rule reason mismatch"
 
         # 审计 span 关联与 span 表一致（三行均含 trace/span 关联）
         for a in items:
@@ -307,7 +352,7 @@ class TestBehavior:
             with pytest.raises(PolicyBlocked) as exc_info:
                 deps.sdk.execute_tool(
                     "verify_customer_id",
-                    {"id_card": "110101199003071234"},
+                    {"id_card": _fixture_profile()["id_card"]},
                     probe_fn,
                 )
         assert calls == []  # 机验9：block 时 fn 未执行
@@ -344,7 +389,7 @@ class TestBehavior:
             with pytest.raises(PolicyBlocked) as exc_info:
                 deps.sdk.execute_tool(
                     "verify_customer_id",
-                    {"id_card": "110101199003071234"},
+                    {"id_card": _fixture_profile()["id_card"]},
                     must_not_run,
                 )
         pb = exc_info.value
@@ -766,3 +811,208 @@ class TestM211AuditStatsByRule:
             "verdict_audit_hits": 0,
             "hits": 1,
         }]
+
+
+class TestIssue29:
+    def test_five_tool_schemas_and_registry(self):
+        fields = ["order_id", "phone", "id_card", "order_id", "order_id"]
+        descriptions = [
+            ("查询订单数据库，返回订单的物流状态等最新信息", "订单号，如 20241025001"),
+            ("按手机号查询客户联系资料，用于回电前核对客户信息", "客户手机号，展示时如 138****5678"),
+            ("按身份证号查询客户实名核验信息，用于回拨前身份核对", "客户 18 位身份证号"),
+            ("在合成本地场景创建派送前回电请求", "需要派送前回电的订单号"),
+            ("从合成订单查询配送预计时间", "查询配送预计时间的订单号"),
+        ]
+        expected = [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {field: {"type": "string", "description": field_description}},
+                        "required": [field],
+                    },
+                },
+            }
+            for name, field, (description, field_description) in zip(
+                ISSUE29_TOOL_NAMES, fields, descriptions
+            )
+        ]
+        assert config.TOOLS == expected
+        assert list(customer_tools.TOOL_IMPLS) == ISSUE29_TOOL_NAMES
+        for name in ISSUE29_TOOL_NAMES:
+            assert customer_tools.TOOL_IMPLS[name] is getattr(customer_tools, name)
+
+    def test_fixed_user_message_and_system_prompt(self):
+        assert DEMO_USER_MESSAGE == (
+            "帮我查一下订单 20241025001 的物流进度，并安排派送前回电。"
+            "回电前请完成客户身份核验，再告诉我处理结果。"
+        )
+        assert re.search(r"1[3-9]\d{9}|\d{17}[\dXx]", DEMO_USER_MESSAGE) is None
+        assert config.SYSTEM_PROMPT == (
+            "你是电商客服助手。根据订单号查询物流与联系线索，再用工具返回的手机号查询回电核验资料，"
+            "使用资料中的身份证号尝试实名核验。不要编造资料或要求用户直接提供这些号码。"
+            "任何工具调用被隐私合规策略拦截后，立即停止本次任务，不重试、不换工具绕过，"
+            "也不继续创建回电请求。向客户说明策略拦截、任务已停止并转人工，"
+            "不展示原始手机号或身份证号。所有可见号码必须掩码。"
+        )
+
+    def test_order_and_contact_derive_fixture_pii(self, no_network):
+        order = customer_tools.query_user_db({"order_id": "20241025001"})
+        assert order["found"] is True
+        phone_matches = (
+            order["order"]["customer_phone"] == config.ORDERS["20241025001"]["customer_phone"]
+        )
+        assert phone_matches, "order fixture contact mismatch"
+        profile = customer_tools.query_contact_by_phone(
+            {"phone": order["order"]["customer_phone"]}
+        )
+        assert profile["found"] is True
+        identity_matches = profile["profile"]["id_card"] == _fixture_profile()["id_card"]
+        assert identity_matches, "contact fixture identity mismatch"
+        record_matches = (
+            config.REALNAME_RECORDS[profile["profile"]["id_card"]]["id_card"]
+            == _fixture_profile()["id_card"]
+        )
+        assert record_matches, "realname fixture relation mismatch"
+
+    def test_callback_and_eta_local_results(self, no_network):
+        assert customer_tools.create_callback_request({"order_id": "20241025001"}) == {
+            "created": True,
+            "request": {
+                "request_id": "callback-20241025001",
+                "order_id": "20241025001",
+                "timing": "派送前",
+                "status": "待回电",
+            },
+        }
+        assert customer_tools.get_delivery_eta({"order_id": "20241025001"}) == {
+            "found": True, "order_id": "20241025001",
+            "eta": config.ORDERS["20241025001"]["eta"],
+        }
+        assert customer_tools.create_callback_request({"order_id": "missing"}) == {
+            "created": False, "order_id": "missing", "message": "订单不存在",
+        }
+        assert customer_tools.get_delivery_eta({"order_id": "missing"}) == {
+            "found": False, "order_id": "missing", "message": "订单不存在",
+        }
+
+    def test_scripted_three_step_contract(self, no_network):
+        llm = ScriptedLlmClient()
+        messages = [
+            {"role": "system", "content": config.SYSTEM_PROMPT},
+            {"role": "user", "content": DEMO_USER_MESSAGE},
+        ]
+        names = []
+        for step, expected in enumerate(ISSUE29_TOOL_NAMES[:3]):
+            response = llm.chat(messages, config.TOOLS)
+            assert len(response.tool_calls) == 1
+            call = response.tool_calls[0]
+            names.append(call.name)
+            assert call.name == expected
+            assert call.call_id == f"scripted-{step + 1}"
+            assert response.content is None and response.usage is None
+            expected_args = [
+                {"order_id": "20241025001"},
+                {"phone": _fixture_profile()["phone"]},
+                {"id_card": _fixture_profile()["id_card"]},
+            ][step]
+            args_match = call.args == expected_args
+            assert args_match, "scripted argument derivation mismatch"
+            # 只执行两个安全查询。第三步只验证契约，绝不进入实名函数体。
+            result = customer_tools.TOOL_IMPLS[expected](call.args) if step < 2 else {}
+            messages.append({
+                "role": "tool", "tool_call_id": call.call_id,
+                "content": json.dumps(result, ensure_ascii=False),
+            })
+        assert names == ["query_user_db", "query_contact_by_phone", "verify_customer_id"]
+        for _ in range(2):
+            terminal = llm.chat(messages, config.TOOLS)
+            assert terminal.tool_calls == []
+        # 本地实现只允许标准库的数据处理依赖，不导入旧网络客户端或环境模块。
+        source = BASE_DIR / "scenario" / "customer_service" / "scripted_llm.py"
+        imports = set()
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imports.add(node.module)
+        assert imports <= {"__future__", "json", "dataclasses"}
+
+    def test_agent_stops_at_r1_with_zero_bodies(self, deps, no_network, monkeypatch):
+        body_counts = dict.fromkeys(ISSUE29_TOOL_NAMES, 0)
+        attempted = []
+        for name in ISSUE29_TOOL_NAMES:
+            original = customer_tools.TOOL_IMPLS[name]
+
+            def counted(args, _name=name, _original=original):
+                body_counts[_name] += 1
+                return _original(args)
+
+            monkeypatch.setitem(customer_tools.TOOL_IMPLS, name, counted)
+
+        execute_tool = deps.sdk.execute_tool
+
+        def observed_execute(name, args, fn, **kwargs):
+            attempted.append(name)
+            return execute_tool(name, args, fn, **kwargs)
+
+        monkeypatch.setattr(deps.sdk, "execute_tool", observed_execute)
+        result = run_customer_service_turn(deps.sdk, deps.llm, DEMO_USER_MESSAGE)
+        # 独立断言使两个可达 mutation 分别击中实名和回电计数。
+        assert 0 == body_counts["verify_customer_id"]
+        assert 0 == body_counts["create_callback_request"]
+        assert 0 == body_counts["get_delivery_eta"]
+        assert body_counts["query_user_db"] == 1
+        assert body_counts["query_contact_by_phone"] == 1
+        assert attempted == ISSUE29_TOOL_NAMES[:3]
+
+        spans = deps.storage.get_trace_spans(result.trace_id)
+        assert len(spans) == 7
+        tool_spans = [s for s in spans if s["name"].startswith("execute_tool ")]
+        assert [s["name"] for s in tool_spans] == [f"execute_tool {n}" for n in attempted]
+        blocked = tool_spans[-1]
+        assert blocked["status_code"] == "ERROR"
+        assert blocked["attributes"]["error.type"] == "policy.block"
+        assert blocked["attributes"]["skill_observability.matched_rule"] == "r1-pii-id-card"
+        assert blocked["attributes"]["skill_observability.verdict"] == "block"
+        root = next(s for s in spans if s["parent_span_id"] is None)
+        assert root["status_code"] == "UNSET" and root["end_time_unix_nano"] is not None
+
+        items, total = deps.storage.list_audits(
+            verdict=None, agent_id=None, tool_name=None, rule_id=None,
+            from_ns=None, to_ns=None, page=1, page_size=100,
+            trace_id=result.trace_id,
+        )
+        assert total == 3
+        rows = sorted(items, key=lambda row: row["id"])
+        assert [r["tool_name"] for r in rows] == attempted
+        assert [(r["verdict"], r["action"], r["rule_id"]) for r in rows] == [
+            ("allow", None, None),
+            ("allow", "audit", "r1b-pii-phone-audit"),
+            ("block", "block", "r1-pii-id-card"),
+        ]
+        assert [r["span_id"] for r in rows] == [s["span_id"] for s in tool_spans]
+        # answer 含旧运行时原理由，仅在内存作布尔检查，不输出原文。
+        stopped = "[终止报告]" in result.answer and "不重试、不改道" in result.answer
+        assert stopped, "agent did not report termination"
+
+    @pytest.mark.parametrize("relative_path,size,digest", [
+        (
+            "scenario/cassettes/customer-service.yaml", 8256,
+            "31780679f339ae5036087f785649df88a13eeebe6630bb3faa869a53d23c4cb4",
+        ),
+        (
+            "scenario/customer_service/llm.py", 2974,
+            "067150caf9f1a57917ac8293d0b5562930f34c302a30941c367e7f6b6e8976fb",
+        ),
+    ])
+    def test_formal_replay_stays_blocked_with_unchanged_fingerprints(
+        self, relative_path, size, digest,
+    ):
+        raw = (BASE_DIR / relative_path).read_bytes()
+        assert len(raw) == size
+        assert hashlib.sha256(raw).hexdigest() == digest
+        assert config.FORMAL_REPLAY_STATUS == "BLOCKED"
